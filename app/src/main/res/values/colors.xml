@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 車機色板（同 Ui.java token 一致） -->
+<resources>
+    <color name="eq_bg">#FF0E0F12</color>
+    <color name="eq_bg2">#FF141821</color>
+    <color name="eq_surface">#FF171A20</color>
+    <color name="eq_surface2">#FF1F232B</color>
+    <color name="eq_stroke">#FF2C3138</color>
+    <color name="eq_text">#FFF4F6F8</color>
+    <color name="eq_text_dim">#FFA9AEB6</color>
+    <color name="eq_accent">#FF4DA3FF</color>
+    <color name="eq_accent_press">#FF3D8AD9</color>
+    <color name="eq_on_accent">#FF07131F</color>
+    <color name="eq_danger">#FFE5484D</color>
+    <color name="eq_ok">#FF3DD68C</color>
+</resources>
