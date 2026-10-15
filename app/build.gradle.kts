@@ -12,8 +12,8 @@ android {
         applicationId = "com.sevenxu.eq"
         minSdk = 28
         targetSdk = 28
-        versionCode = 10
-        versionName = "1.0"
+        versionCode = 12
+        versionName = "1.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

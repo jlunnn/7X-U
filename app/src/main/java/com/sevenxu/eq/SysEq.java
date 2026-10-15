@@ -144,6 +144,45 @@ public final class SysEq {
         }
     }
 
+    /** 讀返每段實際生效嘅 dB（唔信 set 成功，一律讀返）。 */
+    public synchronized float[] readAll() {
+        float[] o = new float[bands];
+        for (int i = 0; i < bands; i++) o[i] = read(i);
+        return o;
+    }
+
+    /** 讀返每段實際 cutoff 頻率（Hz）—— DynamicsProcessing 先有得讀返。 */
+    public synchronized float[] readCutoffs() {
+        float[] o = new float[bands];
+        for (int i = 0; i < bands; i++) {
+            float f = freqs[i];
+            if (dp != null) {
+                try {
+                    DynamicsProcessing.EqBand b = dp.getPostEqBandByChannelIndex(0, i);
+                    if (b != null && b.getCutoffFrequency() > 0) f = b.getCutoffFrequency();
+                } catch (Throwable ignored) {
+                }
+            }
+            o[i] = f;
+        }
+        return o;
+    }
+
+    /** 逐段自檢用：只寫一段、其餘歸零，然後讀返全部段。 */
+    public synchronized float[] sweepStep(int band, float db, boolean sleep) {
+        float[] t = new float[bands];
+        for (int k = 0; k < bands; k++) t[k] = 0f;
+        if (band >= 0 && band < bands) t[band] = db;
+        apply(t, false);
+        if (sleep) {
+            try {
+                Thread.sleep(90);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        return readAll();
+    }
+
     /** 直接由 31 段曲線套用（Activity／BootReceiver 共用）：系統段目標 = 曲線喺該段中心頻率嘅值 ＋ 前級。 */
     public synchronized String applyCurve(float[] gains31, double preampDb, boolean verify) {
         if (!ready()) return "未掛上";
@@ -175,6 +214,11 @@ public final class SysEq {
         float[] o = new float[applied.length];
         System.arraycopy(applied, 0, o, 0, applied.length);
         return o;
+    }
+
+    /** 係咪用自訂引擎（DynamicsProcessing，段數自己砌）；false = 車機原生 HAL Equalizer。 */
+    public synchronized boolean isCustom() {
+        return dp != null;
     }
 
     public synchronized boolean isOn() {

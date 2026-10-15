@@ -80,6 +80,11 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout mainPage, settingsPage;
     private Button gearBtn;
     private androidx.appcompat.widget.SwitchCompat swBoot, swAutoOpen, swEngine;
+    private Button sweepUp, sweepDown;
+    private TextView sweepSum, sweepOut, sweepLine;
+    private LinearLayout sweepPage;
+    private boolean settingsOn;
+    private volatile boolean sweeping = false;
     private boolean syncing;
     private TextView setStatusTv;
     private EqFrame eqFrame;
@@ -123,9 +128,14 @@ public class MainActivity extends AppCompatActivity {
         settingsPage = buildSettingsPage();
         settingsPage.setVisibility(View.GONE);
 
+        sweepPage = (LinearLayout) buildSweepPage();
+        sweepPage.setVisibility(View.GONE);
+
         container.addView(mainPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0));
         container.addView(settingsPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        container.addView(sweepPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0));
         setContentView(container);
     }
@@ -200,7 +210,76 @@ public class MainActivity extends AppCompatActivity {
         setStatusTv.setPadding(0, Ui.dp(this, 6), 0, 0);
         st.addView(setStatusTv);
         p.addView(st);
+
+        // 逐段自檢：逐段單獨 ±12 dB → 讀返每段實際生效值（測完自動復原曲線）
+        LinearLayout swc = Ui.card(this);
+        swc.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        swc.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
+        swc.addView(Ui.label(this, "逐段自檢"));
+        TextView sh = Ui.text(this, "逐段單獨推 +12 / −12 dB（其餘歸零），再讀返每段實際生效值 —— 結果會開全屏頁逐行顯示，測完自動復原你嘅曲線。", 12f, Ui.DIM);
+        sh.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
+        swc.addView(sh);
+        LinearLayout srow = Ui.row(this);
+        sweepUp = Ui.segment(this, "▶ 逐段 +12 dB");
+        sweepUp.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 210), Ui.dp(this, 50)));
+        sweepUp.setOnClickListener(v -> runSweep(12f));
+        srow.addView(sweepUp);
+        srow.addView(space(10));
+        sweepDown = Ui.segment(this, "▶ 逐段 −12 dB");
+        sweepDown.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 210), Ui.dp(this, 50)));
+        sweepDown.setOnClickListener(v -> runSweep(-12f));
+        srow.addView(sweepDown);
+        srow.addView(space(10));
+        Button showRes = Ui.segment(this, "睇上次結果");
+        showRes.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 170), Ui.dp(this, 50)));
+        showRes.setOnClickListener(v -> showSweep(true));
+        srow.addView(showRes);
+        swc.addView(srow);
+        sweepLine = Ui.text(this, "未跑過。", 15f, Ui.DIM);
+        sweepLine.setPadding(0, Ui.dp(this, 8), 0, 0);
+        swc.addView(sweepLine);
+        p.addView(swc);
         return p;
+    }
+
+    /** 全屏「逐段自檢結果」頁（大字總結 ＋ 逐行結果）。 */
+    private View buildSweepPage() {
+        LinearLayout p = Ui.col(this);
+        p.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 16), Ui.dp(this, 10));
+        LinearLayout head = Ui.row(this);
+        head.addView(Ui.title(this, "逐段自檢結果"));
+        head.addView(space(16));
+        head.addView(Ui.text(this, "逐段單獨 ±12 dB → 讀返每段實際生效值", 14f, Ui.DIM));
+        head.addView(space(0, 1f));
+        Button back = Ui.segment(this, "← 設定");
+        back.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 150), Ui.dp(this, 48)));
+        back.setOnClickListener(v -> showSweep(false));
+        head.addView(back);
+        p.addView(head);
+        p.addView(Ui.divider(this));
+        sweepSum = Ui.text(this, "未跑過。\n按「▶ 逐段 +12 dB」開始。", 20f, Ui.TEXT);
+        sweepSum.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 8));
+        p.addView(sweepSum);
+        android.widget.ScrollView sc = new android.widget.ScrollView(this);
+        sc.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        sweepOut = Ui.text(this, "", 15f, Ui.DIM);
+        sweepOut.setTypeface(android.graphics.Typeface.MONOSPACE);
+        sc.addView(sweepOut);
+        p.addView(sc);
+        return p;
+    }
+
+    private void showSweep(boolean on) {
+        if (mainPage == null || settingsPage == null || sweepPage == null) return;
+        mainPage.setVisibility(on || settingsOn ? View.GONE : View.VISIBLE);
+        if (on) {
+            settingsPage.setVisibility(View.GONE);
+            sweepPage.setVisibility(View.VISIBLE);
+        } else {
+            sweepPage.setVisibility(View.GONE);
+            settingsPage.setVisibility(View.VISIBLE);
+        }
     }
 
     /** 一行設定：左邊標題＋說明、右邊開關。which：0=開機自動開 1=開 app 自動開 2=引擎 */
@@ -255,8 +334,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void showSettings(boolean on) {
         if (mainPage == null || settingsPage == null) return;
+        settingsOn = on;
         mainPage.setVisibility(on ? View.GONE : View.VISIBLE);
         settingsPage.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (sweepPage != null) sweepPage.setVisibility(View.GONE);
         if (on) stopPulse();
         else refreshSysUi();
         flash(on ? "設定頁（⚠️ = 有車機限制）" : "主頁");
@@ -586,6 +667,107 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         refreshSysUi();
+    }
+
+    // --------------------------------------------------- 逐段自檢
+
+    /** 頻率寫法：20 Hz、31.5 Hz、1.25k、20k。 */
+    private static String hz5(float f) {
+        if (f >= 1000f) {
+            float k = f / 1000f;
+            String s = (Math.abs(k - Math.round(k)) < 0.05f)
+                    ? String.valueOf(Math.round(k))
+                    : String.format(java.util.Locale.US, "%.2f", k);
+            return s + "k";
+        }
+        if (f == Math.rint(f)) return String.valueOf((int) f);
+        return String.format(java.util.Locale.US, "%.1f", f);
+    }
+
+    /**
+     * 逐段自檢：每段單獨寫 testDb、其餘歸零 → 讀返全部段，檢查「本段有變、鄰段冇跟住變」（= 段段獨立可調）。
+     * 測完自動復原原本曲線。結果逐行顯示；聽住都會一聲聲咁變（可以順便聽得出邊段有反應）。
+     */
+    private void runSweep(final float testDb) {
+        if (sweeping) {
+            flash("自檢進行中…");
+            return;
+        }
+        if (sys == null || !sys.ready()) {
+            flash("未掛上系統 EQ，先按 EQ 開");
+            return;
+        }
+        final int n = sys.bands();
+        final float[] cut = sys.readCutoffs();
+        final boolean custom = sys.isCustom();
+        final float[] keep = dsp.gains().clone();
+        final double keepPre = dsp.preampDb();
+        sweeping = true;
+        showSweep(true);                                   // 開全屏結果頁，逐行即時顯示
+        if (sweepOut != null) sweepOut.setText("");
+        if (sweepSum != null) sweepSum.setText("⏳ 逐段試進行中… 0 / " + n);
+        if (sweepLine != null) sweepLine.setText("⏳ 進行中… 0 / " + n);
+        if (sweepUp != null) sweepUp.setEnabled(false);
+        if (sweepDown != null) sweepDown.setEnabled(false);
+        final long t0 = System.currentTimeMillis();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int ok = 0;
+                for (int i = 0; i < n; i++) {
+                    float[] back = sys.sweepStep(i, testDb, true);
+                    float got = back[i];
+                    float nb = 0f;
+                    for (int k = 0; k < n; k++) {
+                        if (k != i && Math.abs(back[k]) > Math.abs(nb)) nb = back[k];
+                    }
+                    boolean pass = Math.abs(got - testDb) <= 0.6f && Math.abs(nb) <= 0.6f;
+                    if (pass) ok++;
+                    final String line = String.format(java.util.Locale.US,
+                            "#%02d %-7s 目標 %+.0f → 讀返 %+.1f  鄰段 %+.1f  %s",
+                            i + 1, hz5(cut[i]), testDb, got, nb, pass ? "✅" : "⚠️");
+                    final int done = i + 1;
+                    ui.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (sweepOut != null) sweepOut.append(line + "\n");
+                            if (sweepSum != null) sweepSum.setText("⏳ 逐段試進行中… " + done + " / " + n);
+                        }
+                    });
+                }
+                sys.applyCurve(keep, keepPre, false);              // 復原用家曲線
+                final int okF = ok;
+                final int nF = n;
+                final boolean cs = custom;
+                final long ms = System.currentTimeMillis() - t0;
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        String eng = cs ? ("自訂 " + nF + " 段") : ("車機原生 " + nF + " 段");
+                        String verdict = (okF == nF)
+                                ? "✅ " + okF + "/" + nF + " 段逐段可調（段段獨立）"
+                                : "⚠️ 只有 " + okF + "/" + nF + " 段逐段可調";
+                        sweepSum.setText(verdict + "\n引擎：" + eng
+                                + "　頻率 " + hz5(cut[0]) + " → " + hz5(cut[nF - 1])
+                                + "　用時 " + (ms / 1000.0) + " s");
+                        if (sweepOut != null) {
+                            sweepOut.append("\n—— 已復原原本曲線 ——\n");
+                            sweepOut.append(cs
+                                    ? "自訂引擎：31 段各自一條 peaking 濾波，理論上段段可獨立 +/-。\n"
+                                    : "車機原生：只有車機自己嘅段數真受控，其餘係映射出嚟，所以會有 ⚠️。\n");
+                        }
+                        sweeping = false;
+                        if (sweepUp != null) sweepUp.setEnabled(true);
+                        if (sweepDown != null) sweepDown.setEnabled(true);
+                        if (sweepLine != null) {
+                            sweepLine.setText(verdict + "　（" + eng + " · 用時 " + (ms / 1000.0) + " s）");
+                        }
+                        flash(verdict);
+                        refreshSysUi();
+                    }
+                });
+            }
+        }).start();
     }
 
     /** 拖動中：合併成 ~160 ms 一次，唔好每個 block 打爆 HAL。 */
