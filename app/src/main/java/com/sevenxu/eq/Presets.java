@@ -113,18 +113,12 @@ public final class Presets {
     /** 內建 preset 清單（次序 = UI 上嘅次序）。 */
     public static List<P> builtin() {
         List<P> list = new ArrayList<>();
-        list.add(new P("平坦", flat()));
-        list.add(new P("低音+", lowShelf(5.5, 100, 2.2)));
-        list.add(new P("低音−", lowShelf(-5.0, 100, 2.2)));
-        list.add(new P("人聲", add(bell(-3.0, 315, 1.0), bell(3.5, 2500, 1.2))));
-        list.add(new P("搖滾", add(lowShelf(4.5, 120, 2.0), bell(-2.0, 500, 1.2), bell(3.0, 3200, 1.3))));
-        list.add(new P("流行", add(lowShelf(3.0, 90, 2.0), bell(-1.5, 400, 1.0), bell(2.5, 4000, 1.3))));
-        list.add(new P("古典", add(lowShelf(2.0, 80, 2.4), bell(1.5, 6300, 1.6))));
-        list.add(new P("爵士", add(lowShelf(2.5, 100, 2.0), bell(2.0, 2000, 1.4))));
-        list.add(new P("響度", add(lowShelf(6.0, 100, 2.4), highShelf(4.5, 6300, 1.6), bell(-1.5, 800, 1.5))));
-        list.add(new P("V 型", add(lowShelf(5.0, 120, 2.0), highShelf(5.0, 5000, 1.8), bell(-3.0, 1000, 1.6))));
-        list.add(new P("車廂補償", add(bell(-3.5, 250, 1.1), bell(2.5, 3150, 1.3), bell(-2.0, 10000, 1.0))));
-        list.add(new P("重低音", add(lowShelf(8.0, 63, 1.6), bell(-2.0, 200, 1.0))));
+        list.add(new P("Flat", flat()));
+        list.add(new P("Vocal", add(bell(-3.0, 315, 1.0), bell(3.5, 2500, 1.2))));
+        list.add(new P("Rock", add(lowShelf(4.5, 120, 2.0), bell(-2.0, 500, 1.2), bell(3.0, 3200, 1.3))));
+        list.add(new P("Pop", add(lowShelf(3.0, 90, 2.0), bell(-1.5, 400, 1.0), bell(2.5, 4000, 1.3))));
+        list.add(new P("V-Shape", add(lowShelf(5.0, 120, 2.0), highShelf(5.0, 5000, 1.8), bell(-3.0, 1000, 1.6))));
+        list.add(new P("Cabin", add(bell(-3.5, 250, 1.1), bell(2.5, 3150, 1.3), bell(-2.0, 10000, 1.0))));
         return list;
     }
 

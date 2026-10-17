@@ -8,19 +8,30 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 懸浮窗（行車中用 EQ；車機要授權「顯示在其他應用程式上層」） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 讀本機音檔（唔上傳任何嘢） -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <application
+        <uses-permission android:name="android.car.permission.CAR_ZEKR_CONTROL_AUDIO_EFFECT" />
+    <uses-permission android:name="android.car.permission.CAR_CONTROL_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.car.permission.CAR_CONTROL_AUDIO_VOLUME" />
+    <uses-permission android:name="android.car.permission.CAR_AUDIO_ROUTING" />
+
+    <uses-permission android:name="android.car.permission.CAR_ZEEKR_CONTROL_AUDIO_EFFECT" />
+    <uses-permission android:name="android.car.permission.CAR_ZEEKR_CONTROL_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.car.permission.CAR_ZEEKR_CONTROL_AUDIO_VOLUME" />
+
+<application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="7X=U"
         android:supportsRtl="true"
-        android:theme="@style/Theme.車機Eq">
+        android:theme="@style/Theme.ZeekrEq">
 
         <activity
             android:name=".MainActivity"
@@ -36,6 +47,12 @@
         <!-- 揸住全域 audio effect（媒體音樂 EQ），app 退到背景都唔會還原 -->
         <service
             android:name=".EqService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- 懸浮 EQ 窗（行車中用；保留車機上下左右 info bar） -->
+        <service
+            android:name=".FloatEqService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 

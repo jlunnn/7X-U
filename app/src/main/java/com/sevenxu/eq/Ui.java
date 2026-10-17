@@ -18,24 +18,29 @@ import android.widget.TextView;
  */
 public final class Ui {
 
-    public static final int BG = 0xFF0E0F12;
-    public static final int BG_TOP = 0xFF141821;
-    public static final int SURFACE = 0xFF171A20;
-    public static final int SURFACE_2 = 0xFF1F232B;
-    public static final int STROKE = 0xFF2C3138;
-    public static final int TEXT = 0xFFF4F6F8;
-    public static final int DIM = 0xFFA9AEB6;
-    public static final int ACCENT = 0xFF4DA3FF;
-    public static final int ACCENT_SOFT = 0x334DA3FF;
-    public static final int ON_ACCENT = 0xFF07131F;
-    public static final int DANGER = 0xFFE5484D;
-    public static final int OK = 0xFF3DD68C;
-    public static final int WARN = 0xFFFFC24B;
-    public static final int CUT = 0xFFFF8A5B;      // 負增益用色（橙）
-    public static final int SPEC = 0x773DD68C;     // 頻譜柱（綠、半透明）
+    public static final int BG = 0xFF0D110D;
+    public static final int BG_TOP = 0xFF0D110D;
+    public static final int SURFACE = 0xFF1A1F16;
+    public static final int SURFACE_2 = 0xFF1A1F16;
+    public static final int STROKE = 0xFF1E2418;
+    public static final int TEXT = 0xFFFFFFFF;
+    public static final int DIM = 0xFFA0A89A;
+    public static final int ACCENT = 0xFFB6FF3B;
+    public static final int ACCENT_SOFT = 0x33B6FF3B;
+    public static final int ON_ACCENT = 0xFF1A1A1A;
+    public static final int DANGER = 0xFFFF6B5B;
+    public static final int OK = 0xFFB6FF3B;
+    public static final int WARN = 0xFFB6FF3B;
+    public static final int CUT = 0xFF8A6A4A;      // 負增益用色（橙）
+    public static final int SPEC = 0x88B6FF3B;     // 頻譜柱（綠、半透明）
 
-    public static final int R_CARD = 14;
-    public static final int R_BTN = 10;
+    // EQ-Control 掣款式
+    public static final int BTN_FILL = 0xFF1A1F16;
+    public static final int BTN_LINE = 0xFF2C3526;
+    public static final int BTN_TXT = 0xFFA0A89A;
+    public static final int BTN_R = 8;
+    public static final int R_CARD = 16;
+    public static final int R_BTN = 12;
     public static final int PAD = 10;
     public static final int GAP = 8;
 
@@ -51,6 +56,88 @@ public final class Ui {
 
     public static int sp(Context c, float v) {
         return Math.round(v * c.getResources().getDisplayMetrics().scaledDensity);
+    }
+
+
+    /** EQ-Control 滑桿：track（未填 #2A3025、已填 #B6FF3B、4dp 高、圓角 2）。 */
+    public static android.graphics.drawable.Drawable seekTrack(Context c) {
+        android.graphics.drawable.GradientDrawable bgd = new android.graphics.drawable.GradientDrawable();
+        bgd.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        bgd.setColor(0xFF2A3025);
+        bgd.setCornerRadius(dp(c, 2));
+        bgd.setSize(0, dp(c, 4));
+        android.graphics.drawable.GradientDrawable pgd = new android.graphics.drawable.GradientDrawable();
+        pgd.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        pgd.setColor(0xFFB6FF3B);
+        pgd.setCornerRadius(dp(c, 2));
+        pgd.setSize(0, dp(c, 4));
+        android.graphics.drawable.LayerDrawable d = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[]{bgd, pgd});
+        d.setId(0, android.R.id.background);
+        d.setId(1, android.R.id.progress);
+        d.setLayerInset(1, dp(c, 6), 0, dp(c, 6), 0);      // 已填部分內縮（thumb 半徑）
+        return d;
+    }
+
+
+    /** EQ-Control 滑桿 thumb（圓形 Ø12 + 深描邊）。 */
+    public static android.graphics.drawable.Drawable seekThumbCircle(Context c) {
+        android.graphics.drawable.GradientDrawable t = new android.graphics.drawable.GradientDrawable();
+        t.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        t.setColor(0xFFB6FF3B);
+        t.setStroke(Math.max(1, dp(c, 1)), 0xFF0D110D);
+        t.setSize(dp(c, 12), dp(c, 12));
+        return t;
+    }
+
+    /** EQ-Control 滑桿 thumb：Ø12 霓虹綠。 */
+    /** EQ-Control 滑桿 thumb：🎚 fader 圖示（高度 = bar ×1.1，手繪唔靠字型）。 */
+    public static android.graphics.drawable.Drawable seekThumb(Context c) {
+        int s = Math.round(dp(c, 22) * 1.1f);          // bar 高度 + 10%
+        android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(
+                s, s, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas cv = new android.graphics.Canvas(bm);
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        float cx = s / 2f;
+        // 直立槽
+        p.setColor(0xFF0D110D);
+        cv.drawRoundRect(cx - s * 0.10f, s * 0.06f, cx + s * 0.10f, s * 0.94f,
+                s * 0.10f, s * 0.10f, p);
+        p.setColor(0xFF2A3025);
+        cv.drawRoundRect(cx - s * 0.075f, s * 0.10f, cx + s * 0.075f, s * 0.90f,
+                s * 0.075f, s * 0.075f, p);
+        // 霓虹旋鈕（中段）
+        p.setColor(0xFFB6FF3B);
+        cv.drawCircle(cx, s / 2f, s * 0.26f, p);
+        p.setColor(0xFF0D110D);
+        cv.drawCircle(cx, s / 2f, s * 0.10f, p);
+        android.graphics.drawable.BitmapDrawable d =
+                new android.graphics.drawable.BitmapDrawable(c.getResources(), bm);
+        d.setBounds(0, 0, s, s);
+        return d;
+    }
+
+    /** EQ-Control 文字風格（大寫、11sp、灰、medium、字距）。 */
+    public static void tagStyle(TextView t) {
+        t.setTextSize(11f);
+        t.setTextColor(BTN_TXT);
+        t.setAllCaps(true);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        try {
+            t.setLetterSpacing(0.06f);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** EQ-Control 數值文字風格。 */
+    public static void valStyle(TextView t) {
+        t.setTextSize(12f);
+        t.setTextColor(0xFFFFFFFF);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        try {
+            t.setLetterSpacing(0.04f);
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 圓角 + 幼邊框底（車機風格）。 */
@@ -106,18 +193,25 @@ public final class Ui {
     }
 
     /** 一般按鈕（大觸控區、文字 18sp、圓角）。 */
+    /** 一般按鈕（EQ-Control 款式：#1A1F16 底、1px 框、圓角 8、灰字）。 */
     public static Button button(Context c, String s) {
         Button b = new Button(c);
         b.setText(s);
         b.setTextSize(BTN_TEXT);
         b.setAllCaps(false);
         b.setIncludeFontPadding(false);
+        b.setSingleLine(true);
         b.setGravity(Gravity.CENTER);
         b.setMinHeight(dp(c, 46));
         b.setMinimumHeight(dp(c, 46));
-        b.setPadding(dp(c, 4), 0, dp(c, 4), 0);
-        b.setBackground(box(SURFACE_2, STROKE, R_BTN, c));
-        b.setTextColor(TEXT);
+        b.setPadding(dp(c, 2), 0, dp(c, 2), 0);      // 框內文字左右各 2px
+        b.setBackground(box(BTN_FILL, BTN_LINE, BTN_R, c));
+        b.setTextColor(BTN_TXT);
+        b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        try {
+            b.setLetterSpacing(0.06f);
+        } catch (Throwable ignored) {
+        }
         return b;
     }
 
@@ -129,16 +223,15 @@ public final class Ui {
     }
 
     public static void setActive(Button b, boolean active) {
-        b.setBackground(box(active ? ACCENT : SURFACE_2, active ? ACCENT : STROKE, R_BTN,
+        b.setBackground(box(active ? 0xFF243024 : BTN_FILL, active ? ACCENT : BTN_LINE, BTN_R,
                 b.getContext()));
-        b.setTextColor(active ? ON_ACCENT : TEXT);
-        b.setTypeface(active ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        b.setTextColor(active ? ACCENT : BTN_TXT);
     }
 
     public static void setAccent(Button b, boolean accent) {
-        b.setBackground(box(accent ? ACCENT : SURFACE_2, accent ? ACCENT : STROKE, R_BTN,
+        b.setBackground(box(accent ? 0xFF243024 : BTN_FILL, accent ? ACCENT : BTN_LINE, BTN_R,
                 b.getContext()));
-        b.setTextColor(accent ? ON_ACCENT : TEXT);
+        b.setTextColor(accent ? ACCENT : BTN_TXT);
     }
 
     /** 橫向分隔幼線。 */

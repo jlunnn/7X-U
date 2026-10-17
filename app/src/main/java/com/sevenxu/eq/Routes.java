@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * 輸出通道（車機每條 BUS 都要用 AudioDeviceInfo.getAddress() 點名）。
  *
- * <p>已實測（車機）：車外廣播認 <b>BUS12_OUTER_NOTIFY</b>（配 USAGE_MEDIA）；
+ * <p>已實測（ZEEKR 7X）：車外廣播認 <b>BUS12_OUTER_NOTIFY</b>（配 USAGE_MEDIA）；
  * 車內要明選 BUS00_MEDIA（唔指定裝置＝容器內冇聲）。</p>
  *
  * <p>⚠️ UI 一律只出「車內／車外」，BUS 名只可以落 log／診斷報告。</p>

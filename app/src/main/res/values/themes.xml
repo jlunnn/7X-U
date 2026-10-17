@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 車機風格：Material 3 深色 + 藍 accent（幼邊框分格） -->
-    <style name="Theme.車機Eq" parent="Theme.Material3.Dark.NoActionBar">
+    <style name="Theme.ZeekrEq" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/eq_accent</item>
         <item name="colorOnPrimary">@color/eq_on_accent</item>
         <item name="colorPrimaryContainer">@color/eq_accent</item>

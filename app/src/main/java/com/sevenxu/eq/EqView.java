@@ -48,6 +48,9 @@ public class EqView extends View {
     private float[] spec;                            // 頻譜（dBFS），null = 唔畫
     private boolean showCurve = true;
     private float[] sysFreqs;                        // 車機系統 EQ 各段中心頻率
+    /** 有冇顯示「車機真受控」金框（預設關：自檢已關，金框變多餘）。 */
+    public static boolean showReal = false;
+    private boolean[] real;                          // 14 段：true = 車機真受控
     private String sysName = "";
 
     /** 系統（媒體音樂）EQ 嘅段中心頻率 + 引擎名（畫上圖，等用戶見到車機實際得幾段、喺邊）。 */
@@ -55,6 +58,30 @@ public class EqView extends View {
         sysFreqs = (freqs == null || freqs.length == 0) ? null : freqs;
         sysName = name == null ? "" : name;
         invalidate();
+    }
+
+    /** 31 段邊幾段係車機真受控（null 或者全部 true = 全部都真受控，唔需要標示）。 */
+    public void setRealBands(boolean[] r) {
+        real = (r != null && r.length == Bands.N) ? r : null;
+        invalidate();
+    }
+
+    /** 有冇「部分段係映射、唔受控」嘅情況（先值得畫標示）。 */
+    private boolean partlyReal() {
+        if (real == null) return false;
+        for (boolean b : real) {
+            if (!b) return true;
+        }
+        return false;
+    }
+
+    private int realCount() {
+        if (real == null) return Bands.N;
+        int n = 0;
+        for (boolean b : real) {
+            if (b) n++;
+        }
+        return n;
     }
 
     public EqView(Context c, Dsp dsp) {
@@ -90,7 +117,7 @@ public class EqView extends View {
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         float d = getResources().getDisplayMetrics().density;
         gutter = 34 * d;
-        padTop = 38 * d;                              // 讓大字讀數 + 系統 EQ 標示有位
+        padTop = 44 * d;                              // 讓大字讀數 + 系統 EQ 標示有位
         padBottom = 34 * d;                           // 頻率標籤（交錯兩行）
         top = padTop;
         bottom = h - padBottom;
@@ -156,8 +183,8 @@ public class EqView extends View {
             }
         }
 
-        // ---- 車機系統 EQ 段位置（實線位置 = 車機真正生效嘅段）----
-        if (sysFreqs != null) {
+        // ---- 車機系統 EQ 段位置（黃色虛線）：只有長按 EQ 圖開「真受控標示」時才畫 ----
+        if (showReal && sysFreqs != null) {
             p.setStyle(Paint.Style.STROKE);
             p.setStrokeWidth(Math.max(1f, d));
             p.setPathEffect(new android.graphics.DashPathEffect(new float[]{5 * d, 6 * d}, 0));
@@ -166,6 +193,15 @@ public class EqView extends View {
                 double t = Math.log(f / 20.0) / Math.log(1000.0);
                 if (t < 0 || t > 1) continue;
                 float x = gutter + plotW * (float) t;
+                // 只畫對得上某一段柱嘅（車機段位同 UI 柱唔一定對齊；全部畫會錯位重疊）
+                boolean aligned = false;
+                for (int i = 0; i < Bands.N; i++) {
+                    if (Math.abs(bandX(i) - x) < colW * 0.45f) {
+                        aligned = true;
+                        break;
+                    }
+                }
+                if (!aligned) continue;
                 cv.drawLine(x, top, x, bottom, p);
                 p.setStyle(Paint.Style.FILL);
                 cv.drawCircle(x, top - 7 * d, 3 * d, p);
@@ -176,7 +212,10 @@ public class EqView extends View {
             p.setTextAlign(Paint.Align.LEFT);
             p.setColor(Ui.WARN);
             p.setTextSize(12 * d);
-            cv.drawText("車機 EQ " + sysFreqs.length + " 段 ← " + sysName,
+            cv.drawText(partlyReal()
+                            ? (showReal ? ("車機真受控 " + realCount() + "/" + Bands.N + " 段 ← 金框 = 真受控，灰 = 映射")
+                            : ("14 段媒體 EQ（長按圖可顯示「真受控」金框）"))
+                            : ("車機 EQ " + sysFreqs.length + " 段 ← " + sysName),
                     gutter + 2 * d, top - 12 * d, p);
         }
 
@@ -188,10 +227,11 @@ public class EqView extends View {
             float y0 = dbToY(0);
             boolean act = (i == activeBand);
             float halfW = colW * 0.30f;
+            boolean mapped = partlyReal() && !real[i];     // 映射段：撳咗唔會單獨變
 
             // 底軌
             p.setStyle(Paint.Style.FILL);
-            p.setColor(0x33FFFFFF);
+            p.setColor(mapped ? 0x18FFFFFF : 0x33FFFFFF);
             r.set(x - d, top, x + d, bottom);
             cv.drawRoundRect(r, d, d, p);
 
@@ -227,19 +267,34 @@ public class EqView extends View {
                 p.setColor(db >= 0 ? Ui.ACCENT : Ui.CUT);
                 cv.drawCircle(x, top + 3 * d, 2.2f * d, p);
             }
+            // 車機真受控段：粗金框（一眼睇出邊幾段真正推得）
+            if (showReal && partlyReal() && !mapped) {
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(2f * d);
+                p.setColor(0xFFFFC24B);
+                r.set(x - colW * 0.42f, top - 3 * d, x + colW * 0.42f, bottom + 3 * d);
+                cv.drawRoundRect(r, 3 * d, 3 * d, p);
+                p.setStyle(Paint.Style.FILL);
+            }
+            // 映射段：底部一粒灰點（唔出框 = 撳咗唔會單獨變）
+            if (mapped) {
+                p.setColor(0x55FFFFFF);
+                cv.drawCircle(x, bottom + 4 * d, 1.8f * d, p);
+            }
         }
 
         // ---- 頻率標籤（交錯兩行，唔會撞） ----
         p.setTextSize(10 * d);
         p.setTextAlign(Paint.Align.CENTER);
         for (int i = 0; i < Bands.N; i++) {
-            p.setColor(i == activeBand ? Ui.TEXT : Ui.DIM);
+            boolean mapped = partlyReal() && !real[i];
+            p.setColor(i == activeBand ? Ui.TEXT : (mapped ? 0x66D8DEE9 : Ui.DIM));
             float ly = bottom + 12 * d + ((i % 2 == 1) ? 11 * d : 0);
             cv.drawText(Bands.LABEL[i], bandX(i), ly, p);
         }
 
         // ---- 級聯響應曲線 ----
-        if (showCurve) {
+        if (true) {   // 曲線永遠顯示（之前被 showCurve 擋住）
             long now = System.currentTimeMillis();
             if (curveDirty || now - curveAt > CURVE_MS) {
                 computeCurve();
@@ -263,15 +318,16 @@ public class EqView extends View {
         // ---- 右上大字：正在調嗰段 ----
         int ab = activeBand;
         if (ab >= 0) {
-            p.setTextAlign(Paint.Align.RIGHT);
+            // 讀數放左邊（右邊被浮窗 EQ／✕ 掣遮蓋過）
+            p.setTextAlign(Paint.Align.LEFT);
             p.setColor(Ui.DIM);
-            p.setTextSize(13 * d);
-            cv.drawText("正在調節", gutter + plotW, top - 14 * d, p);
+            p.setTextSize(19 * d);
+            cv.drawText("正在調節", gutter, top - 30 * d, p);
             String s = Bands.LABEL[ab] + "　" + Presets.Fmt.sign(dsp.get(ab)) + " dB";
             p.setColor(dsp.get(ab) >= 0 ? Ui.ACCENT : Ui.CUT);
             p.setTextSize(19 * d);
             p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            cv.drawText(s, gutter + plotW, top - 30 * d, p);
+            cv.drawText(s, gutter, top - 12 * d, p);
             p.setTypeface(android.graphics.Typeface.DEFAULT);
         }
     }

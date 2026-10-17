@@ -12,12 +12,12 @@ public final class AppLog {
     }
 
     public static void d(String tag, String msg) {
-        android.util.Log.d("車機Eq/" + tag, msg);
+        android.util.Log.d("ZeekrEq/" + tag, msg);
         push(msg);
     }
 
     public static void e(String tag, String msg) {
-        android.util.Log.e("車機Eq/" + tag, msg);
+        android.util.Log.e("ZeekrEq/" + tag, msg);
         push(msg);
     }
 

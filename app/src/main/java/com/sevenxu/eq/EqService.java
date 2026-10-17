@@ -26,7 +26,7 @@ public final class EqService extends Service {
 
     private static SysEq sysEq;
 
-    private static final String CH = "sevenxu_eq_sys";
+    private static final String CH = "zeekreq_sys";
     private static final int NOTI_ID = 41;
 
     /** 全 app 共用一個 SysEq（Activity 同 Service 揸住同一個）。 */
