@@ -1,43 +1,64 @@
-# 7X=U — 31 段媒體 EQ（Android 車機）
+# 7X=U — 14 段媒體 EQ（Android 車機）
 
-31 段圖形等化器（20 Hz – 20 kHz、每段 ±12 dB），**直接改車機播放嘅媒體音**（掛喺全域 audio session
-＝藍牙／內建播放器／任何 app 出嘅聲都會經呢個 EQ），唔需要 app 自己播歌。
+14 段圖形等化器（50 Hz – 12 kHz、每段 ±10 dB），**直接改車機播放嘅媒體音**（掛喺全域 audio session，
+即藍牙／內建播放器／任何 app 出嘅聲都會經呢個 EQ），唔需要 app 自己播歌。
+
+介面係**全屏懸浮窗**（車機 overlay），可以收成一個圓形捷徑，長期停留喺車機畫面。
 
 ## 功能
 
-- **31 段 EQ**：ISO 1/3 八度、每段 −12 ~ +12 dB；拖動有平滑、軟限幅（全段推滿都唔破音）。
-- **EQ 總開關**：粗線框掣 —— 開＝動態黃色脈動＋光暈，關＝原有灰粗線。
-- **設定頁**（⚙️）：開機自動打開_EQ_、開 app 自動設 EQ 為開、EQ 引擎切換（自訂多段／車機原生）。
-- **測試音**：單頻、粉紅噪音、白噪音、掃頻、1K Tone（本機播放，用嚟快速試聽）。
-- **12 條內建曲線**（低音+／人聲／搖滾／V 型／車廂補償…）＋自訂曲線儲存。
-- **逐段自檢**：設定頁一按，逐段單獨 ±12 dB、再讀返每段實際生效值＋鄰段有冇跟住動，全屏逐行列出；
-  用嚟驗證車機係唔係 31 段段段獨立可調（測完自動復原你嘅曲線）。
-- 完全離線；設定只存本機。
+- **14 段 EQ**：`50 / 63 / 160 / 250 / 400 / 630 / 1k / 1.6k / 2.5k / 4k / 6.3k / 8k / 10k / 12k Hz`，
+  每段 **−10 ~ +10 dB**；柱上／柱下顯示每段 dB，並有霓虹綠**級聯響應曲線**。
+- **BASS BOOST**：`0–12 dB`，**每格 1 dB**；80 Hz 以下平滑低架（80 Hz 全量、160 Hz 約 1/5、250 Hz 更少）。
+- **DB GAIN**：前級 `±12 dB`（整體 headroom 控制）。
+- **LIMITER**（預設關）：開啟後若峰值超過 0 dBFS，會自動扣前級避免削波（屬 headroom 保護，非動態壓縮）。
+- **Preset**：`Flat / Vocal / Rock / Pop / V-Shape / Cabin`；可 `💾 儲存` 自訂曲線，
+  已存曲線以 chip 顯示 —— **短撳套用**、**長撳確認刪除**。
+- **測試音**（收於 `more`）：`SINE / PINK / WHITE / SWEEP / 1K`。
+- **懸浮窗**：全屏、保留車機 info bar 安全區；`✕` 收成圓掣（螢光紅框、每 10 秒閃一下）。
+- **圓掣**：記住拖動後位置；大小可調 `40–192 dp`（預設跟屏幕短邊 7.5%）。
+- **15 秒無操作自動收埋**（設定頁可關）。
+- **著車／解鎖自動開啟**：背景起服務、套用上次曲線，只顯示圓掣。
+- **完全離線**：冇 `INTERNET` 權限、冇帳號、冇上傳、冇分析；設定只存本機 `SharedPreferences`。
+
+## 版面（懸浮窗）
+
+```
+✕（紅框閃）              Equalizer   ·   EQ ON   ·   ⚙ SETTINGS
+  [ 14 條 EQ 柱 ＋ 霓虹綠曲線 ]
+  BASS BOOST [====●====] 6 dB  │ more ▾ │  DB GAIN [··●··] +0.0 dB
+  LIMITER  [ON／OFF]
+  Flat Vocal Rock Pop V-Shape Cabin  💾 儲存  (自訂 chip)
+  （more ▾ 展開：SINE / PINK / WHITE / SWEEP / 1K）
+```
 
 ## 技術
 
-- `Dsp`：31 個串聯 peaking biquad（RBJ cookbook、transposed DF2T）＋逐 block 平滑＋tanh 軟限幅（純 Java，可獨立測試）。
-- `SysEq`：掛全域 audio effect —— 優先 `DynamicsProcessing`（可自訂段數／cutoff），唔得就退 `Equalizer(session 0)`。
-- `EqService`：前台服務揸住 effect，令 app 退到背景都保持生效。
-- `EqView`：自繪 31 條推桿 ＋ 級聯響應曲線 ＋ 車機實際生效段位置。
-- `Engine`：本機測試音播放（音檔／咪模式程式碼仍保留，未接 UI）。
+- `SysEq`：掛全域 audio effect —— 優先 `DynamicsProcessing`（postEq，最多 31 段內部解析度），
+  唔得就退 `Equalizer(session 0)`；每段目標響應由 `Dsp` 計出再寫入。
+- `Dsp`：peaking biquad 級聯響應計算（RBJ cookbook）＋逐 block 平滑＋tanh 軟限幅。
+- `FloatEqService`：懸浮窗 UI ＋ EQ 引擎狀態 ＋ 測試音（`AudioTrack`）＋ 圓掣。
+- `Watchdog`：`AlarmManager` 每 60 秒檢查，服務唔在生就自動起返（唔受 Doze 影響）。
+- `EqService`：前台服務揸住 effect，app 退背景都保持生效。
 
-## 私隱
+## 已知限制
 
-- **冇 `INTERNET` 權限**、冇帳號、冇上傳、冇分析。
-- 只讀本機音檔（可選權限）同錄音（可選權限）。
-- 所有設定存 `SharedPreferences`。
+- **唔可以逐喇叭（每隻喇叭獨立）EQ**：車機分區／DSP 屬 `signature|privileged` 權限
+  （例如 `android.car.permission.CAR_ZEEKR_CONTROL_AUDIO_EFFECT`），第三方側載 app 取唔到。
+- **唔可以改車機媒體音量**：部分車機封鎖 `setStreamVolume`／`adjustStreamVolume`；
+  本版已移除此滑桿，請用車機本身音量掣。
+- 「Limiter」為**前級 headroom 保護**，唔係動態壓縮器。
+- 逐喇叭／DSP 掃描僅供診斷（預設唔會執行）。
 
 ## 安裝
 
-- arm64-v8a、Android 9（API 28）以上；車機側載（App Lab）或直接 adb install。
-- 要 EQ 到「其他 app 嘅聲」需要系統／root 特權；本 app 用嘅係標準 `AudioEffect`（全域名稱空間），
-  車機 HAL 是否支援要實測 —— app 內會顯示實際段數同狀態。
+- **arm64-v8a**、Android 9（API 28）以上；車機側載（App Lab）或 `adb install`。
+- 首次使用需要授予「顯示在其他 app 上層」（`SYSTEM_ALERT_WINDOW`）權限。
 
 ## 建置
 
 ```bash
-./gradlew :app:assembleDebug        # 需要 JDK 17 + Android SDK 36
+./gradlew :app:assembleDebug        # 需要 JDK 17 + Android SDK
 ```
 
 離線 DSP 驗證（唔需要 Android）：
@@ -48,12 +69,10 @@ javac -encoding UTF-8 -d /tmp/dspcheck \
 java -cp /tmp/dspcheck DspCheck
 ```
 
-圖示／設計頁生成：
+## 私隱
 
-```bash
-python3 tools/make_eq_icon.py            # 5 個密度 launcher icon（PIL）
-python3 tools/make_design_page.py /tmp/out   # 設計頁（icon ＋ UI 規格）
-```
+- **冇 `INTERNET` 權限**、冇帳號、冇上傳、冇分析、冇廣告 SDK。
+- 所有設定（曲線、preset、圓掣位置、開關）只存本機 `SharedPreferences`。
 
 ## 授權
 
