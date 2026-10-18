@@ -34,7 +34,7 @@
 
 ## 技術
 
-- `SysEq`：掛全域 audio effect —— 優先 `DynamicsProcessing`（postEq，最多 31 段內部解析度），
+- `SysEq`：掛全域 audio effect —— 優先 `DynamicsProcessing`（postEq，內部多段解析度），
   唔得就退 `Equalizer(session 0)`；每段目標響應由 `Dsp` 計出再寫入。
 - `Dsp`：peaking biquad 級聯響應計算（RBJ cookbook）＋逐 block 平滑＋tanh 軟限幅。
 - `FloatEqService`：懸浮窗 UI ＋ EQ 引擎狀態 ＋ 測試音（`AudioTrack`）＋ 圓掣。
