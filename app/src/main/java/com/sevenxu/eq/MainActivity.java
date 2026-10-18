@@ -101,6 +101,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // （早期 finish 已 revert：會令 app 完全開唔到）
         sp = getSharedPreferences(PREF, MODE_PRIVATE);
         routes = new Routes(this);
         engine = new Engine(this, routes);
@@ -181,6 +182,9 @@ public class MainActivity extends AppCompatActivity {
         container.addView(sweepPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0));
         setContentView(container);
+        sp.edit().remove("auto_sweep").apply();
+        autoSweep = false;
+        // （跳浮窗改喺 onResume 做，避免 UI 未建好就退背景）
     }
 
     // ------------------------------------------------------------- 設定頁
@@ -228,15 +232,7 @@ public class MainActivity extends AppCompatActivity {
                     flash(v ? "開 app 自動開 EQ：已開" : "開 app 自動開 EQ：已關（會記住上次狀態）");
                 }));
         card.addView(Ui.divider(this));
-        card.addView(settingRow(3, "開 app 自動逐段自檢（會影響音效）",
-                "⚠️ 自檢會即時改動每一段，部分車機 bypass 唔到 → 會聽到雜聲。預設關。"
-                        + "需要時手動按「▶ 逐段 +12 dB」；上次結果會照用（唔會出聲）。",
-                autoSweep, v -> {
-                    autoSweep = v;
-                    savePrefs();
-                    if (v) startAutoSweep();
-                    flash(v ? "開 app 自動逐段自檢：已開" : "開 app 自動逐段自檢：已關");
-                }));
+        // 開 app 自動逐段自檢：已按用戶要求取消
 
         // 懸浮圓掣大小（VOLUME 風格 VolBar；40–192dp）
         LinearLayout szRow = Ui.row(this);
@@ -282,6 +278,14 @@ public class MainActivity extends AppCompatActivity {
         });
         szRow.addView(autoBtn);
         card.addView(szRow);
+        // 15 秒無操作自動收埋（同「開機自動打開 EQ」一樣用 settingRow 開關）
+        card.addView(settingRow(9, "15 秒無操作自動收埋", "浮窗 15 秒冇操作會自動收成圓掣",
+                sp.getBoolean("auto_min", true), v -> {
+                    sp.edit().putBoolean("auto_min", v).apply();
+                    if (floatOn) FloatEqService.show(MainActivity.this);
+                    flash(v ? "無操作自動收埋：開（15 秒）" : "無操作自動收埋：關");
+                }));
+
 
 
 
@@ -290,75 +294,9 @@ public class MainActivity extends AppCompatActivity {
         // 車機原生音場（反射層）—— 對應 AppVenture ④「車機整合」
         // 車機原生音場卡已移除（簽名權限，第三方不可用）
 
-        LinearLayout st = Ui.card(this);
-        st.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        st.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
-        st.addView(Ui.label(this, "現況"));
-        setStatusTv = Ui.text(this, "", 14f, Ui.DIM);
-        setStatusTv.setPadding(0, Ui.dp(this, 6), 0, 0);
-        st.addView(setStatusTv);
-        p.addView(st);
+        // 「現況」＋「開機套用診斷」卡已按用戶要求取消
 
-        // 開機套用診斷（本機記錄，唔上報、唔上網）：一眼睇到今次著車有冇真係套用成功
-        LinearLayout dg = Ui.card(this);
-        dg.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        dg.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
-        dg.addView(Ui.label(this, "開機套用診斷（只存本機）"));
-        bootDiagTv = Ui.text(this, BootDiag.summary(this), 13f, Ui.DIM);
-        bootDiagTv.setPadding(0, Ui.dp(this, 6), 0, 0);
-        dg.addView(bootDiagTv);
-        LinearLayout dgr = Ui.row(this);
-        dgr.setPadding(0, Ui.dp(this, 10), 0, 0);
-        Button dgRe = Ui.segment(this, "↻ 重新整理");
-        dgRe.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 170), Ui.dp(this, 46)));
-        dgRe.setOnClickListener(v -> {
-            if (bootDiagTv != null) bootDiagTv.setText(BootDiag.summary(this));
-            flash("診斷已更新");
-        });
-        dgr.addView(dgRe);
-        dgr.addView(space(10));
-        Button dgCl = Ui.segment(this, "清除記錄");
-        dgCl.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 150), Ui.dp(this, 46)));
-        dgCl.setOnClickListener(v -> {
-            BootDiag.clear(this);
-            if (bootDiagTv != null) bootDiagTv.setText(BootDiag.summary(this));
-            flash("診斷記錄已清除");
-        });
-        dgr.addView(dgCl);
-        dg.addView(dgr);
-        p.addView(dg);
-
-        // 逐段自檢：逐段單獨 ±12 dB → 讀返每段實際生效值（測完自動復原曲線）
-        LinearLayout swc = Ui.card(this);
-        swc.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        swc.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
-        swc.addView(Ui.label(this, "逐段自檢"));
-        TextView sh = Ui.text(this, "逐段單獨推 +12 / −12 dB（其餘歸零），再讀返每段實際生效值 —— 結果會開全屏頁逐行顯示，測完自動復原你嘅曲線。", 12f, Ui.DIM);
-        sh.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
-        swc.addView(sh);
-        LinearLayout srow = Ui.row(this);
-        sweepUp = Ui.segment(this, "▶ 逐段 +12 dB");
-        sweepUp.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 210), Ui.dp(this, 50)));
-        sweepUp.setOnClickListener(v -> runSweep(12f));
-        srow.addView(sweepUp);
-        srow.addView(space(10));
-        sweepDown = Ui.segment(this, "▶ 逐段 −12 dB");
-        sweepDown.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 210), Ui.dp(this, 50)));
-        sweepDown.setOnClickListener(v -> runSweep(-12f));
-        srow.addView(sweepDown);
-        srow.addView(space(10));
-        Button showRes = Ui.segment(this, "睇上次結果");
-        showRes.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 170), Ui.dp(this, 50)));
-        showRes.setOnClickListener(v -> showSweep(true));
-        srow.addView(showRes);
-        swc.addView(srow);
-        sweepLine = Ui.text(this, "未跑過。", 15f, Ui.DIM);
-        sweepLine.setPadding(0, Ui.dp(this, 8), 0, 0);
-        swc.addView(sweepLine);
-        p.addView(swc);
+        // 逐段自檢／測試掣已移出設定頁（功能仍保留喺 code，需要時可叫返）
         return p;
     }
 
@@ -857,7 +795,7 @@ public class MainActivity extends AppCompatActivity {
             if (sys.ready()) EqService.start(this);
             doSysApply(true);
             sweepReal = null;                        // 換引擎：舊自檢結果唔再適用
-            if (autoSweep) startAutoSweep();         // 自動重新逐段自檢
+            // 自動逐段自檢已取消（換引擎都唔會跑）
             flash(sysMsg);
         });
         r.addView(engineBtn);
@@ -1597,7 +1535,7 @@ public class MainActivity extends AppCompatActivity {
         }
         autoBoot = sp.getBoolean(K_BOOT, true);
         autoOnOpen = sp.getBoolean(K_AUTO_OPEN, true);
-        autoSweep = sp.getBoolean(K_AUTO_SWEEP, false);
+        autoSweep = false;   // 開機／開 app 套用診斷：已按用戶要求永久取消
         halOnly = false;                            // 唔再用車機原生 EQ 引擎（用戶要求：只要自訂 14 段）
         if (autoOnOpen) sysOnPref = true;           // 開 app 自動設 EQ 為 ON
         String fp = sp.getString(K_FILE, "");
@@ -1609,7 +1547,7 @@ public class MainActivity extends AppCompatActivity {
         syncSettings();                             // 開關同步做 prefs 嘅真實狀態
         tick();
         flash("31 段 EQ 就緒");
-        if (autoSweep) {
+        if (false) {   // 自動自檢已取消
             ui.postDelayed(() -> startAutoSweep(), 1800);   // 開 app 自動靜默逐段自檢
         }
     }
@@ -1753,9 +1691,29 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** 開 app 直接去懸浮窗（唔顯示主頁）；由浮窗 ⚙ 入嚟（settings=true）除外。 */
+    private void jumpToFloatIfNeeded() {
+        try {
+            if (getIntent() != null && getIntent().getBooleanExtra("settings", false)) return;
+            if (!sp.getBoolean("float_on", true)) return;
+            FloatEqService.show(this);
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                if (FloatEqService.alive) {
+                    finishAndRemoveTask();      // 浮窗已起 → 真正關閉主頁（唔殘留載入畫面）
+                } else {
+                    moveTaskToBack(true);       // 浮窗未起 → 留喺主頁，唔會空白
+                }
+            }, 700);
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        if (getIntent() != null && getIntent().getBooleanExtra("settings", true)) {
+            FloatEqService.settingsOpen = true;      // 由 ⚙ 入嚟
+        }
         refreshButtons();
         tick();
         // 懸浮窗改過曲線／前級 → 返到 app 時重新讀返（共用同一份 prefs）
@@ -1766,6 +1724,7 @@ public class MainActivity extends AppCompatActivity {
             if (!sys.ready() && sys.attach(halOnly)) EqService.start(this);
             doSysApply(false);
             if (sweepReal == null) loadSweepCache();     // 照標金框，但唔會再跑自檢
+        jumpToFloatIfNeeded();                        // UI ready 後才跳浮窗
         }
     }
 
@@ -1807,6 +1766,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onPause() {
+        FloatEqService.settingsOpen = false;
         super.onPause();
         savePrefs();
     }

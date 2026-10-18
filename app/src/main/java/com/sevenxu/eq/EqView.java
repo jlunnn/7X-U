@@ -309,9 +309,14 @@ public class EqView extends View {
                 else curve.lineTo(x, y);
             }
             p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(3 * d);
-            p.setColor(Ui.OK);
+            p.setStrokeWidth(9 * d);                 // 光暈
+            p.setColor(0x55B6FF3B);
+            p.setStrokeCap(Paint.Cap.ROUND);
             cv.drawPath(curve, p);
+            p.setStrokeWidth(4.5f * d);              // 主線（霓虹綠、易見）
+            p.setColor(0xFFB6FF3B);
+            cv.drawPath(curve, p);
+            p.setStrokeCap(Paint.Cap.BUTT);
             p.setStyle(Paint.Style.FILL);
         }
 
@@ -359,6 +364,10 @@ public class EqView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
+        try {
+            FloatEqService.pokeActivity();      // 拖 EQ 段時唔好自動收埋
+        } catch (Throwable ignored) {
+        }
         int action = e.getActionMasked();
         switch (action) {
             case MotionEvent.ACTION_DOWN:

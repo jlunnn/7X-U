@@ -28,7 +28,7 @@ public final class SysEq {
     /** Bass Boost dB（0–12，由 UI 寫入）。 */
     public static int bassBoostDb = 0;
     /** Limiter 開關（由 UI 寫入）。 */
-    public static boolean limiterOn = true;
+    public static boolean limiterOn = false;
     private DynamicsProcessing dp;
     private Equalizer eq;
     private int bands;
@@ -81,7 +81,7 @@ public final class SysEq {
                             false, 0,        // preEq 唔用
                             false, 0,        // MBC 唔用
                             true, n,         // postEq：N 段
-                            false            // limiter 唔用
+                            false            // limiter stage 關（會爆聲道，已 revert）
                     ).build();
                     d = new DynamicsProcessing(1, 0, cfg);          // session 0 = 全域
                     DynamicsProcessing.Eq e = new DynamicsProcessing.Eq(true, true, n);
@@ -239,6 +239,12 @@ public final class SysEq {
     /** 直接由 31 段曲線套用（Activity／BootReceiver 共用）：系統段目標 = 曲線喺該段中心頻率嘅值 ＋ 前級。 */
     /** 用家音量（dB 數位偏移）：0 = 唔變；由懸浮窗 VOLUME 控制。 */
     public static volatile double userVolDb = 0;
+    /** EQ 開啟後嘅整體音量補償（dB，0–12）：抵消「開 EQ 變細聲」。 */
+    public static volatile double compDb = 0;
+    /** 開關淡入淡出偏移（dB，-24→0）。 */
+    private static volatile double fadeDb = 0;
+    private float[] lastG31;
+    private double lastPre;
 
 
     /** Bass Boost：80 Hz 以下平滑低架（0–12 dB）。 */
@@ -258,16 +264,19 @@ public final class SysEq {
             double d = Dsp.responseDb(g31, f, 44100) + preamp + vol + bassTerm(f);
             if (d > peak) peak = d;
         }
-        return peak > -0.5 ? (-0.5 - peak) : 0;
+        return peak > 0 ? (-peak) : 0;
     }
 
     public synchronized String applyCurve(float[] gains31, double preampDb, boolean verify) {
         if (!ready()) return "未掛上";
+        lastG31 = gains31;
+        syncLimiterStage();
+        lastPre = preampDb;
         float[] fr = freqs();
         float[] t = new float[fr.length];
         for (int i = 0; i < fr.length; i++) {
             double db = Dsp.responseDb(gains31, fr[i], 44100) + preampDb + userVolDb
-                    + bassTerm(fr[i]) + limTrim(gains31, preampDb, userVolDb);
+                    + bassTerm(fr[i]) + fadeDb + limTrim(gains31, preampDb, userVolDb);
             t[i] = (float) Math.max(-15, Math.min(15, db));
         }
         return apply(t, verify);
@@ -433,8 +442,28 @@ public final class SysEq {
         return db < lo ? lo : (db > hi ? hi : db);
     }
 
+
+    /** 同步 limiter stage（開／關），唔需要重掛 effect。 */
+    private void syncLimiterStage() {
+        // 已停用：DP limiter stage 會整死右聲道
+    }
+
     public synchronized boolean setEnabled(boolean enable) {
         try {
+            boolean cur = (dp != null) ? dp.getEnabled() : (eq != null && eq.getEnabled());
+            if (cur != enable && lastG31 != null) {
+                if (enable) {
+                    fadeTo(-24);                       // 先靜音
+                    if (dp != null) dp.setEnabled(true);
+                    else eq.setEnabled(true);
+                    fadeTo(0);                         // 再淡入
+                } else {
+                    fadeTo(-24);                       // 淡出
+                    if (dp != null) dp.setEnabled(false);
+                    else eq.setEnabled(false);
+                    fadeTo(0);                         // 還原曲線值
+                }
+            }
             if (dp != null) dp.setEnabled(enable);
             else if (eq != null) eq.setEnabled(enable);
             else return false;
@@ -445,6 +474,26 @@ public final class SysEq {
             error = "開關失敗：" + t.getClass().getSimpleName();
             return false;
         }
+    }
+
+
+    /** 8 步 × 18ms ≈ 150ms 淡變到指定 offset，避免開關時「嘭」一聲。 */
+    private void fadeTo(double target) {
+        if (lastG31 == null) {
+            fadeDb = target;
+            return;
+        }
+        int steps = 8;
+        double from = fadeDb;
+        for (int k = 1; k <= steps; k++) {
+            fadeDb = from + (target - from) * k / steps;
+            applyCurve(lastG31, lastPre, false);
+            try {
+                Thread.sleep(18);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        fadeDb = target;
     }
 
     /** 一行 UI 狀態（唔含 IP／網域／BUS 名）。 */

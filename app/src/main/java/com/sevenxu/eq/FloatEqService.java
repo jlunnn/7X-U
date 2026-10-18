@@ -76,6 +76,18 @@ public class FloatEqService extends Service {
     private static final String K_BASE = "base_gains";
     private static final String[] K_TONE = {"tone_sub", "tone_bass", "tone_mid", "tone_upper", "tone_air"};
     private float[] baseGains = new float[Bands.N];
+    /** 最後互動時間（15 秒無操作自動收埋）。 */
+    private static volatile long lastTouchAt = System.currentTimeMillis();
+
+    /** 任何互動（包括 EQ 圖拖動）都叫一次，刷新「無操作」計時。 */
+    public static void pokeActivity() {
+        lastTouchAt = System.currentTimeMillis();
+    }
+    private volatile boolean minimizedNow = false;
+    /** service 是否在生（主頁用嚟決定可否真正關窗）。 */
+    public static volatile boolean alive = false;
+    /** 主頁（由 ⚙ 打開）喺前面時，暫停自動收埋。 */
+    public static volatile boolean settingsOpen = false;
     private final float[] toneOff = new float[QuickTone.LABEL.length];
     private final TextView[] toneValTv = new TextView[QuickTone.LABEL.length];
     private TextView masterValTv;
@@ -163,7 +175,7 @@ public class FloatEqService extends Service {
         // startup sync：開機／著車自動起浮窗時，由 prefs 還原 Bass Boost／Limiter
         try {
             SysEq.bassBoostDb = sp.getInt("bass_boost", 0);
-            SysEq.limiterOn = sp.getBoolean("limiter", true);
+            SysEq.limiterOn = sp.getBoolean("limiter", false);
         } catch (Throwable ignored) {
         }
         try {
@@ -340,13 +352,15 @@ public class FloatEqService extends Service {
 
     /** 「更多」摺疊：一次過收／開 preset 列、測試音、重掛、歸零。 */
     private void applyExtras(boolean open) {
+        pokeActivity();   // applyExtrasPoked
         int v = open ? View.VISIBLE : View.GONE;
-        for (View x : new View[]{extrasHs, extrasEng, extrasFoot, toneHdrRef}) {
-            if (x != null) x.setVisibility(v);
-        }
-        if (toneRowRef != null) {
-            toneRowRef.setVisibility(open && sp.getBoolean("tone_open", false) ? View.VISIBLE : View.GONE);
-        }
+        // preset 列固定顯示（唔再收埋）
+        if (extrasHs != null) extrasHs.setVisibility(View.VISIBLE);
+        if (extrasFoot != null) extrasFoot.setVisibility(View.VISIBLE);
+        // 「自訂 14 段」狀態文字、測試音摺疊掣：已按用戶要求取消
+        if (extrasEng != null) extrasEng.setVisibility(View.GONE);
+        if (toneHdrRef != null) toneHdrRef.setVisibility(View.GONE);
+        if (toneRowRef != null) toneRowRef.setVisibility(v);   // 測試音內容跟 more 開關
         if (moreHdrRef != null) {
             moreHdrRef.setText(open ? "\u25BE more" : "\u25B8 more");
         }
@@ -364,7 +378,7 @@ public class FloatEqService extends Service {
     private void applyVolume(int v, boolean commit) {
         // 70% = 0 dB 參考；100% = +6 dB；0% = −30 dB
         double volDb = (v >= 70) ? (v - 70) * (6.0 / 30.0) : -((70 - v) * (30.0 / 70.0));
-        SysEq.userVolDb = volDb;
+        SysEq.userVolDb = 0;   // 只用系統音量，唔用數碼增益（避免音質變差）
         try {
             android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
             if (am != null) {
@@ -372,7 +386,22 @@ public class FloatEqService extends Service {
                 int cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
                 int want = (int) Math.round(max * v / 100.0);
                 if (want != cur) {
-                    am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, want, 0);
+                    try {
+                        am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, want, 0);
+                    } catch (Throwable t1) {
+                        // 車機唔准直接 set → 用相對調整（逐級）
+                        int delta = want - cur;
+                        int dir = delta > 0 ? android.media.AudioManager.ADJUST_RAISE
+                                : android.media.AudioManager.ADJUST_LOWER;
+                        for (int i = 0; i < Math.abs(delta); i++) {
+                            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, dir, 0);
+                        }
+                    }
+                }
+                int now = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+                if (commit) {
+                    say(now == want ? ("VOLUME " + v + "%（系統 " + now + "/" + max + "）")
+                            : ("車機唔准 app 改音量（系統仍 " + now + "/" + max + "）"));
                 }
             }
         } catch (Throwable t) {
@@ -386,6 +415,7 @@ public class FloatEqService extends Service {
 
     /** Toast 小提示。 */
     private void say(String s) {
+        pokeActivity();      // 任何有反饋嘅操作都重置 idle 計時
         try {
             android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show();
         } catch (Throwable ignored) {
@@ -395,6 +425,7 @@ public class FloatEqService extends Service {
 
     /** 套用一條已儲存曲線（chip 用）。 */
     private void applyCurveChip(String name, float[] g) {
+        pokeActivity();
         if (dsp == null || g == null) return;
         for (int i = 0; i < Bands.N && i < g.length; i++) dsp.set(i, g[i]);
         if (eqv != null) {
@@ -403,6 +434,54 @@ public class FloatEqService extends Service {
         }
         schedule(true, true);
         say("已套用曲線：" + name);
+    }
+
+
+
+    /** 為所有子 view 掛觸控監聽：撳 preset／拖 slider／任何觸控都刷新 idle 計時。 */
+    private void hookAllTouches(View v) {
+        if (v == null) return;
+        v.setOnTouchListener((vv, ev) -> {
+            pokeActivity();
+            return false;                 // 唔攔截，click／drag 照常
+        });
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) hookAllTouches(g.getChildAt(i));
+        }
+    }
+
+    /** 刪除一條自訂曲線（同時移除 chip）。 */
+    private void deleteUserPreset(String name, View chip) {
+        try {
+            java.util.Map<String, float[]> u = Presets.readUser(sp.getString("user_presets", ""));
+            u.remove(name);
+            sp.edit().putString("user_presets", Presets.writeUser(u)).apply();
+            if (chip != null && chip.getParent() instanceof ViewGroup) {
+                ((ViewGroup) chip.getParent()).removeView(chip);
+            }
+            say("已刪除曲線：" + name);
+        } catch (Throwable t) {
+            say("刪除失敗：" + t.getClass().getSimpleName());
+        }
+    }
+
+    /** 長撳 chip → 彈確認是否需要刪除。 */
+    private void confirmDelete(final String name, final Button chip) {
+        try {
+            android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this,
+                    android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("刪除曲線")
+                    .setMessage("確定刪除「" + name + "」？")
+                    .setPositiveButton("刪除", (dd, w) -> deleteUserPreset(name, chip))
+                    .setNegativeButton("取消", null)
+                    .create();
+            dlg.getWindow().setType(android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+            dlg.show();
+        } catch (Throwable t) {
+            // 車機唔准 service 開 dialog：退而求其次，長撳直接刪（say 會顯示已刪除）
+            deleteUserPreset(name, chip);
+        }
     }
 
     /** 開窗時把已儲存曲線變成可撳 chip。 */
@@ -415,6 +494,11 @@ public class FloatEqService extends Service {
             Button nb = Ui.segment(this, n);
             nb.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
             nb.setOnClickListener(v -> applyCurveChip(n, g));
+            final Button fchip = nb;
+            nb.setOnLongClickListener(v -> {
+                confirmDelete(n, fchip);
+                return true;
+            });
             chipsRow.addView(nb);
         }
     }
@@ -432,6 +516,11 @@ public class FloatEqService extends Service {
             final String fn = n;
             final float[] fg = u.get(n);
             nb.setOnClickListener(v -> applyCurveChip(fn, fg));
+            final Button fchip2 = nb;
+            nb.setOnLongClickListener(v -> {
+                confirmDelete(fn, fchip2);
+                return true;
+            });
             chipsRow.addView(nb);
         }
         say("已儲存曲線：" + n + "（主頁預設列同樣見到）");
@@ -677,6 +766,19 @@ public class FloatEqService extends Service {
 
         Button min = Ui.segment(this, "");
         min.setText("✕");
+        // ✕：螢光紅色外框＋每 10 秒閃一下（行車時容易搵）
+        final int XRED = 0xFFFF2D55;
+        android.graphics.drawable.GradientDrawable xbg = new android.graphics.drawable.GradientDrawable();
+        xbg.setColor(0x00000000);
+        xbg.setCornerRadius(dp(8));
+        xbg.setStroke(Math.max(2, dp(3)), XRED);
+        min.setBackground(xbg);
+        min.setTextColor(XRED);
+        min.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18);
+        min.setAllCaps(false);
+        min.setPadding(0, 0, 0, 0);
+        min.setLayoutParams(new LinearLayout.LayoutParams(dp(56), dp(46)));
+        final Button minRef = min;
 
         // ⚙ 掣：撳返先開主頁（平時主頁會退到背景，唔阻住車機畫面）
         // ==== EQ-Control 嘅 SETTINGS 掣（用 TextView，避免 Button 夾斷字）====
@@ -701,7 +803,11 @@ public class FloatEqService extends Service {
         gear.setLayoutParams(glp);
         gear.setOnClickListener(v -> {
             try {
+                pokeActivity();
+                settingsOpen = false;
+                setMinimized(true);                  // 開主頁時自動收埋浮窗（正確行為）
                 android.content.Intent it = new android.content.Intent(this, MainActivity.class);
+                it.putExtra("settings", true);
                 it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
                         | android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(it);
@@ -711,7 +817,53 @@ public class FloatEqService extends Service {
         });
         head.addView(gear);
         min.setOnClickListener(v -> setMinimized(true));
+        // ---- 15 秒無操作自動收埋（設定頁可關）----
+        try {
+            root.setOnTouchListener((vv, ev) -> {
+                lastTouchAt = System.currentTimeMillis();     // 觸控即刷新
+                return false;                                // 唔攔截，交返俾子 view
+            });
+        } catch (Throwable ignored) {
+        }
+        final android.os.Handler idleH = new android.os.Handler(android.os.Looper.getMainLooper());
+        final Runnable idleTask = new Runnable() {
+            @Override
+            public void run() {   // auto-min idle
+                try {
+                    if (sp.getBoolean("auto_min", true) && root != null && panel != null
+                            && !minimizedNow && !settingsOpen && panel.getVisibility() == View.VISIBLE
+                            && System.currentTimeMillis() - lastTouchAt > 15000L) {
+                        setMinimized(true);
+                    }
+                } catch (Throwable ignored) {
+                }
+                idleH.postDelayed(this, 2000);
+            }
+        };
+        idleH.postDelayed(idleTask, 2000);
+        try {
+            hookAllTouches(root);      // 任何觸控都 reset idle timer
+        } catch (Throwable ignored) {
+        }
         head.addView(min);
+        // 每 10 秒閃一次（alpha 1 → 0.25 → 1，600ms）
+        final android.os.Handler fh = new android.os.Handler(android.os.Looper.getMainLooper());
+        final Runnable flash = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (minRef != null) {
+                        android.animation.ObjectAnimator a = android.animation.ObjectAnimator
+                                .ofFloat(minRef, "alpha", 1f, 0.25f, 1f);
+                        a.setDuration(600);
+                        a.start();
+                    }
+                } catch (Throwable ignored) {
+                }
+                fh.postDelayed(this, 10000);
+            }
+        };
+        fh.postDelayed(flash, 10000);
 
         content.addView(head);
 
@@ -779,6 +931,7 @@ public class FloatEqService extends Service {
         final boolean[] more = {sp.getBoolean("more_open", false)};
         moreHdr.setText(more[0] ? "\u25BE more" : "\u25B8 more");
         moreHdr.setOnClickListener(v -> {
+            pokeActivity();
             more[0] = !more[0];
             sp.edit().putBoolean("more_open", more[0]).apply();
             applyExtras(more[0]);
@@ -788,76 +941,7 @@ public class FloatEqService extends Service {
         extrasHs = hs;
         content.addView(hs);
 
-        // ---- 快速音色旋鈕（SUB / BASS / MID / UPPER / AIR ＋ MASTER）：行車中一隻手指調聲 ----
-        LinearLayout toneBar = new LinearLayout(this);
-        toneBar.setOrientation(LinearLayout.HORIZONTAL);
-        toneBar.setPadding(0, dp(6), 0, dp(2));
-        for (int k = 0; k <= QuickTone.LABEL.length; k++) {
-            final int idx = k;
-            final boolean isMaster = (k == QuickTone.LABEL.length);
-
-            LinearLayout cell = new LinearLayout(this);
-            cell.setOrientation(LinearLayout.VERTICAL);
-            cell.setBackground(bg(0xFF1A1F16, dp(10)));
-            cell.setPadding(dp(3), dp(4), dp(3), dp(4));
-
-            TextView lab = Ui.text(this, isMaster ? "MASTER" : QuickTone.LABEL[k], 11f, 0xFFA0A89A);
-            lab.setAllCaps(true);
-            lab.setGravity(Gravity.CENTER);
-            lab.setSingleLine(true);
-            cell.addView(lab, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            final TextView val = Ui.text(this, isMaster ? "+0" : "0", 20f, 0xFFE6EAF2);
-            val.setTypeface(Typeface.DEFAULT_BOLD);
-            val.setGravity(Gravity.CENTER);
-            val.setPadding(0, dp(1), 0, dp(3));
-            if (isMaster) masterValTv = val;
-            else toneValTv[k] = val;
-            cell.addView(val, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            LinearLayout btns = new LinearLayout(this);
-            btns.setOrientation(LinearLayout.HORIZONTAL);
-            Button bm = miniBtn("\u2212");
-            Button bp = miniBtn("+");
-            bm.setOnClickListener(v -> {
-                if (isMaster) stepPreamp(-1);
-                else stepTone(idx, -QuickTone.STEP);
-            });
-            bp.setOnClickListener(v -> {
-                if (isMaster) stepPreamp(1);
-                else stepTone(idx, QuickTone.STEP);
-            });
-            val.setOnLongClickListener(v -> {
-                if (isMaster) {
-                    dsp.setPreampDb(0);
-                    syncPreamp();
-                    schedule(true, true);
-                    say("MASTER 歸零");
-                } else {
-                    toneOff[idx] = 0f;
-                    recomputeTone();
-                    syncToneUi();
-                    schedule(true, true);
-                    say(QuickTone.LABEL[idx] + " 歸零");
-                }
-                return true;
-            });
-            LinearLayout.LayoutParams blp1 = new LinearLayout.LayoutParams(0, dp(36), 1f);
-            blp1.rightMargin = dp(2);
-            btns.addView(bm, blp1);
-            btns.addView(bp, new LinearLayout.LayoutParams(0, dp(36), 1f));
-            cell.addView(btns, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            clp.leftMargin = dp(2);
-            clp.rightMargin = dp(2);
-            toneBar.addView(cell, clp);
-        }
-        content.addView(toneBar);
+        // SUB／BASS／MID／UPPER／AIR／MASTER 快速旋鈕已按用戶要求移除
 
         // ---- A/B 兩格：一撳切換、長按存入 ----
         LinearLayout abRow = new LinearLayout(this);
@@ -916,6 +1000,7 @@ public class FloatEqService extends Service {
         engRow.setGravity(Gravity.CENTER_VERTICAL);
         Button re = Ui.segment(this, "");
         re.setText("♻️ 重掛");
+        re.setVisibility(View.GONE);      // 「重掛」已按用戶要求取消
         re.setOnClickListener(v -> {
             sys = null;
             EqService.drop();
@@ -932,7 +1017,7 @@ public class FloatEqService extends Service {
         toneHdr.setLayoutParams(new LinearLayout.LayoutParams(dp(150), dp(46)));
         toneHdrRef = toneHdr;
         content.addView(toneHdr);      // 摺疊掣本身要加落內容（否則收埋之後冇得開返）
-        final String[] toneNames = {"單頻", "粉紅噪音", "白噪音", "掃頻", "1K Tone"};
+        final String[] toneNames = {"SINE", "PINK", "WHITE", "SWEEP", "1K"};
         final int[] toneKinds = {0, 2, 1, 3, 4};
         LinearLayout toneRow = new LinearLayout(this);
         toneRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -940,6 +1025,7 @@ public class FloatEqService extends Service {
         for (int ti = 0; ti < toneNames.length; ti++) {
             final int idx = ti;
             Button tb = Ui.segment(this, toneNames[ti]);
+            tb.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 19);   // 同 Hz 字級一致
             tb.setLayoutParams(new LinearLayout.LayoutParams(dp(126), dp(46)));
             tb.setOnClickListener(v -> {
                 if (toneOn == idx) {
@@ -1008,6 +1094,7 @@ public class FloatEqService extends Service {
         pre.setLayoutParams(new LinearLayout.LayoutParams(0, dp(46), 1f));
         pre.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                pokeActivity();
                 dsp.setPreampDb(v - 10);
                 syncPreamp();
             }
@@ -1051,6 +1138,7 @@ public class FloatEqService extends Service {
         volVal.setText(sp.getInt("vol", 70) + "%");
         vol.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                pokeActivity();
                 volVal.setText(v + "%");
                 applyVolume(v, false);
             }
@@ -1078,9 +1166,7 @@ public class FloatEqService extends Service {
                 ((ViewGroup) cv.getParent()).removeView(cv);
             }
         }
-        ctl.addView(vl);
-        ctl.addView(vol);
-        ctl.addView(volVal);
+        // VOLUME 已取消（車機唔准 app 改媒體音量）；位置改放 BASS BOOST
         View vdiv = new View(this);
         vdiv.setBackgroundColor(0xFF1E2418);
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(Math.max(1, dp(1)), dp(30));
@@ -1110,22 +1196,32 @@ public class FloatEqService extends Service {
         bassVal.setMinWidth(dp(70));
         bassVal.setGravity(Gravity.CENTER);
         final VolBar bassBar2 = new VolBar(this);
-        bassBar2.setMax(100);
-        int bb0 = sp.getInt("bass_boost", 0);
-        bassBar2.setProgress(Math.min(100, Math.round(bb0 / 12f * 100f)));
+        bassBar2.setMax(12);                      // 一格 = 1 dB（0–12 dB）
+        int bb0 = Math.max(0, Math.min(12, sp.getInt("bass_boost", 0)));
+        bassBar2.setProgress(bb0);
         bassVal.setText(bb0 + " dB");
         bassBar2.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
-                bassVal.setText(Math.round(v * 0.12f) + " dB");
+                pokeActivity();
+                bassVal.setText(v + " dB");
             }
 
             public void onStartTrackingTouch(android.widget.SeekBar s) {
             }
 
             public void onStopTrackingTouch(android.widget.SeekBar s) {
-                int dbv = Math.round(s.getProgress() * 0.12f);
+                int dbv = s.getProgress();
                 sp.edit().putInt("bass_boost", dbv).apply();
                 SysEq.bassBoostDb = dbv;
+                pokeActivity();
+                try {                       // 直接套用，唔靠 fingerprint／cache
+                    if (sys == null) sys = EqService.get(FloatEqService.this);
+                    if (sys != null && dsp != null) {
+                        sys.applyCurve(dsp.gains(), dsp.preampDb(), false);
+                    }
+                } catch (Throwable t) {
+                    say("Bass Boost 套用失敗：" + t.getClass().getSimpleName());
+                }
                 schedule(true, true);
                 say("Bass Boost：" + dbv + " dB");
             }
@@ -1133,10 +1229,14 @@ public class FloatEqService extends Service {
         LinearLayout.LayoutParams bbLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
         bbLp.leftMargin = dp(8);
         bbLp.rightMargin = dp(8);
-        bassRow.addView(bassLbl);
-        bassRow.addView(bassBar2, bbLp);
-        bassRow.addView(bassVal);
-        content.addView(bassRow);
+        // BASS BOOST 放去原本 VOLUME 嘅位置（同一 horizontal row，DB GAIN 左邊）
+        LinearLayout.LayoutParams bbLp2 = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        bbLp2.leftMargin = dp(8);
+        bbLp2.rightMargin = dp(8);
+        ctl.addView(bassLbl, 0);
+        ctl.addView(bassBar2, 1, bbLp2);
+        ctl.addView(bassVal, 2);
+
 
         // ---- LIMITER（浮窗：防削波）----
         LinearLayout limRow = new LinearLayout(this);
@@ -1147,10 +1247,10 @@ public class FloatEqService extends Service {
         limLbl.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         limLbl.setLetterSpacing(0.06f);
         limLbl.setWidth(dp(96));
-        final Button limBtn = Ui.segment(this, sp.getBoolean("limiter", true) ? "ON" : "OFF");
+        final Button limBtn = Ui.segment(this, sp.getBoolean("limiter", false) ? "ON" : "OFF");
         limBtn.setLayoutParams(new LinearLayout.LayoutParams(dp(96), dp(46)));
         limBtn.setOnClickListener(v -> {
-            boolean on = !sp.getBoolean("limiter", true);
+            boolean on = !sp.getBoolean("limiter", false);
             sp.edit().putBoolean("limiter", on).apply();
             SysEq.limiterOn = on;
             limBtn.setText(on ? "ON" : "OFF");
@@ -1164,6 +1264,12 @@ public class FloatEqService extends Service {
         lhLp.leftMargin = dp(10);
         limRow.addView(limHint, lhLp);
         content.addView(limRow);
+
+        // 所有子 view（含 preset／測試音／重掛／slider）都掛觸控 → 任何操作都 reset idle 計時
+        try {
+            hookAllTouches(root);      // 全部建好之後
+        } catch (Throwable ignored) {
+        }
 
 
 
@@ -1314,6 +1420,8 @@ public class FloatEqService extends Service {
 
     /** 收埋 = 只剩 app icon 圓掣（同 app icon 同一個圖）。 */
     private void setMinimized(boolean min) {
+        minimizedNow = min;
+        if (!min) lastTouchAt = System.currentTimeMillis();   // 展開即重新計時（否則即時再收埋）
         if (panel == null || icon == null) return;
         iconSize = iconSizePx();                                 // 每次收／開都跟設定
         icon.setLayoutParams(new FrameLayout.LayoutParams(iconSize, iconSize));
@@ -1593,7 +1701,9 @@ public class FloatEqService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        alive = true;
         ensureWindow();
+        Watchdog.schedule(this);
         // 設定改動（Bass Boost／Limiter／圓掣尺寸）後，重算並套用目前曲線
         try {
             if (dsp != null) schedule(true, true);
@@ -1604,6 +1714,7 @@ public class FloatEqService extends Service {
 
     @Override
     public void onDestroy() {
+        alive = false;
         try {
             if (sp.getBoolean("float_on", true)) {
                 startForegroundService(new android.content.Intent(this, FloatEqService.class));
