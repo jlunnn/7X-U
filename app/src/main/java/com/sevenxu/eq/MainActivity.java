@@ -208,6 +208,27 @@ public class MainActivity extends AppCompatActivity {
         p.addView(Ui.divider(this));
 
         LinearLayout card = Ui.card(this);
+        LinearLayout logRow = Ui.row(this);
+        Button logBtn = Ui.segment(this, "📋 自啟記錄");
+        logBtn.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 220), Ui.dp(this, 46)));
+        logBtn.setOnClickListener(v -> {
+            try {
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("自啟記錄（最近 40 次）")
+                        .setMessage(StartLog.summary(this))
+                        .setPositiveButton("關閉", null)
+                        .setNeutralButton("清除", (dd, w2) -> {
+                            StartLog.clear(this);
+                            flash("記錄已清除");
+                        })
+                        .show();
+            } catch (Throwable t) {
+                flash("開唔到記錄：" + t.getClass().getSimpleName());
+            }
+        });
+        logRow.addView(logBtn);
+        card.addView(logRow);
+
         card.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         card.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8));
@@ -278,6 +299,162 @@ public class MainActivity extends AppCompatActivity {
         });
         szRow.addView(autoBtn);
         card.addView(szRow);
+        // ---- HUD 尺寸（同 camera app 一致嘅兩個參數）----
+        LinearLayout hudRow = Ui.row(this);
+        hudRow.addView(Ui.label(this, "HUD base size"));
+        final TextView hudVal = Ui.text(this, "", 13f, Ui.TEXT);
+        hudVal.setMinWidth(Ui.dp(this, 76)); hudVal.setGravity(Gravity.CENTER);
+        final VolBar hudBar = new VolBar(this);
+        hudBar.setMax(100);                                   // 60–160dp
+        int hd0 = Math.max(60, Math.min(160, sp.getInt("hud_dp", 92)));
+        hudBar.setProgress(Math.round((hd0 - 60) / 100f * 100f));
+        hudVal.setText(hd0 + " dp");
+        hudBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                hudVal.setText((60 + v) + " dp");
+            }
+            public void onStartTrackingTouch(android.widget.SeekBar s) { }
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int dpv = 60 + s.getProgress();
+                sp.edit().putInt("hud_dp", dpv).apply();
+                if (floatOn) FloatEqService.show(MainActivity.this);
+                flash("HUD base size：" + dpv + " dp");
+            }
+        });
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        hl.leftMargin = Ui.dp(this, 10); hl.rightMargin = Ui.dp(this, 10);
+        hudRow.addView(hudBar, hl); hudRow.addView(hudVal);
+        card.addView(hudRow);
+        LinearLayout thrRow = Ui.row(this);
+        thrRow.addView(Ui.label(this, "Throttle full at"));
+        final TextView thrVal = Ui.text(this, "", 13f, Ui.TEXT);
+        thrVal.setMinWidth(Ui.dp(this, 76)); thrVal.setGravity(Gravity.CENTER);
+        final VolBar thrBar = new VolBar(this);
+        thrBar.setMax(50);                                        // 50–100%
+        int tf0 = Math.max(50, Math.min(100, sp.getInt("throttle_full_pct", 80)));
+        thrBar.setProgress(tf0 - 50);
+        thrVal.setText(tf0 + "%");
+        thrBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                thrVal.setText((50 + v) + "%");
+            }
+            public void onStartTrackingTouch(android.widget.SeekBar s) { }
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int pct = 50 + s.getProgress();
+                sp.edit().putInt("throttle_full_pct", pct).apply();
+                if (floatOn) FloatEqService.show(MainActivity.this);
+                flash("Throttle 到 " + pct + "% 當滿");
+            }
+        });
+        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        tl.leftMargin = Ui.dp(this, 10); tl.rightMargin = Ui.dp(this, 10);
+        thrRow.addView(thrBar, tl); thrRow.addView(thrVal);
+        card.addView(thrRow);
+        card.addView(settingRow(25, "顯示油門加速（上半圓）", "車速圓牌上半圓弧顯示油門深度", sp.getBoolean("throttle_show", true), v -> {
+            sp.edit().putBoolean("throttle_show", v).apply();
+            if (floatOn) FloatEqService.show(MainActivity.this);
+            flash(v ? "油門加速顯示：開" : "油門加速顯示：關");
+        }));
+        LinearLayout beepRow = Ui.row(this);
+        Button beepBtn = Ui.segment(this, "🔔 Test beep");
+        beepBtn.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 240), Ui.dp(this, 46)));
+        beepBtn.setOnClickListener(v -> {
+            try {
+                android.media.ToneGenerator tg = new android.media.ToneGenerator(
+                        android.media.AudioManager.STREAM_MUSIC, 70);
+                tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 400);
+                new android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed(tg::release, 900);
+                flash("Test beep（超速提示音）");
+            } catch (Throwable t) {
+                flash("Beep 失敗：" + t.getClass().getSimpleName());
+            }
+        });
+        beepRow.addView(beepBtn);
+        card.addView(beepRow);
+
+        LinearLayout signRow = Ui.row(this);
+        signRow.addView(Ui.label(this, "Speed sign %"));
+        final TextView signVal = Ui.text(this, "", 13f, Ui.TEXT);
+        signVal.setMinWidth(Ui.dp(this, 76)); signVal.setGravity(Gravity.CENTER);
+        final VolBar signBar = new VolBar(this);
+        signBar.setMax(100);                                  // 80–200%
+        int sg0 = Math.max(80, Math.min(200, sp.getInt("sign_pct", 130)));
+        signBar.setProgress(Math.round((sg0 - 80) / 120f * 100f));
+        signVal.setText(sg0 + "%");
+        signBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                signVal.setText((80 + Math.round(v * 1.2f)) + "%");
+            }
+            public void onStartTrackingTouch(android.widget.SeekBar s) { }
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int pct = 80 + Math.round(s.getProgress() * 1.2f);
+                sp.edit().putInt("sign_pct", pct).apply();
+                if (floatOn) FloatEqService.show(MainActivity.this);
+                flash("Speed sign：" + pct + "%");
+            }
+        });
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        sl.leftMargin = Ui.dp(this, 10); sl.rightMargin = Ui.dp(this, 10);
+        signRow.addView(signBar, sl); signRow.addView(signVal);
+        card.addView(signRow);
+
+        // ---- 車速／行車資訊（第一期：車速牌／超速／門檻／大小）----
+        // GPS 車速圓牌已取消（HUD 內已有車速）
+        card.addView(settingRow(21, "超速提示", "超過門檻時數字變紅閃動", sp.getBoolean("speed_alert", true), v -> {
+            sp.edit().putBoolean("speed_alert", v).apply();
+            flash(v ? "超速提示：開" : "超速提示：關");
+        }));
+
+        LinearLayout sLimitRow = Ui.row(this);
+        sLimitRow.addView(Ui.label(this, "超速門檻"));
+        final TextView sLimitVal = Ui.text(this, "", 13f, Ui.TEXT);
+        sLimitVal.setMinWidth(Ui.dp(this, 76));
+        sLimitVal.setGravity(Gravity.CENTER);
+        final VolBar sLimitBar = new VolBar(this);
+        sLimitBar.setMax(100);                                  // 40–140 km/h
+        int lim0 = Math.max(40, Math.min(140, sp.getInt("speed_limit", 80)));
+        sLimitBar.setProgress(Math.round((lim0 - 40) / 100f * 100f));
+        sLimitVal.setText(lim0 + " km/h");
+        sLimitBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                sLimitVal.setText((40 + v) + " km/h");
+            }
+
+            public void onStartTrackingTouch(android.widget.SeekBar s) {
+            }
+
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int kmh = 40 + s.getProgress();
+                sp.edit().putInt("speed_limit", kmh).apply();
+                flash("超速門檻：" + kmh + " km/h");
+            }
+        });
+        LinearLayout.LayoutParams slLp = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        slLp.leftMargin = Ui.dp(this, 10);
+        slLp.rightMargin = Ui.dp(this, 10);
+        sLimitRow.addView(sLimitBar, slLp);
+        sLimitRow.addView(sLimitVal);
+        card.addView(sLimitRow);
+
+        // 「車速牌大小」已移除（同 Speed sign % 重複）
+
+        // 「7X info bar」設定項已按用戶要求移除
+        card.addView(settingRow(23, "油門／轉數錶", "需要車機訊號層（第二期）", sp.getBoolean("throttle_tach", true), v -> {
+            sp.edit().putBoolean("throttle_tach", v).apply();
+            flash(v ? "油門／轉數：開（第二期接訊號）" : "油門／轉數：關");
+        }));
+        card.addView(settingRow(24, "顯示腳煞", "需要車機訊號層（第二期）", sp.getBoolean("brake_show", true), v -> {
+            sp.edit().putBoolean("brake_show", v).apply();
+            flash(v ? "腳煞顯示：開（第二期接訊號）" : "腳煞顯示：關");
+        }));
+        // 長期開啟：請求「忽略電池優化」＋排 JobScheduler 保活
+        card.addView(settingRow(11, "允許背景長期運行（建議開）", "請求忽略電池優化 ＋ 每 15 分鐘自動檢查", true, v -> {}));
+        try {
+            BootJob.schedule(this);
+        } catch (Throwable ignored) {
+        }
+        // 「允許背景長期運行」已取消（車機冇此設定畫面）
         // 15 秒無操作自動收埋（同「開機自動打開 EQ」一樣用 settingRow 開關）
         card.addView(settingRow(9, "15 秒無操作自動收埋", "浮窗 15 秒冇操作會自動收成圓掣",
                 sp.getBoolean("auto_min", true), v -> {
@@ -821,14 +998,15 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         if (floatOn) {
+            // 先寫 pref 才 stopService —— 否則 onDestroy 見到 float_on=true 會即刻重啟（造成延遲／閃）
+            sp.edit().putBoolean("float_on", false).apply();
             FloatEqService.hide(this);
             floatOn = false;
-            sp.edit().putBoolean("float_on", false).apply();   // 記住狀態（開機回復用）
             flash("懸浮窗：已關");
         } else {
+            sp.edit().putBoolean("float_on", true).apply();
             FloatEqService.show(this);
             floatOn = true;
-            sp.edit().putBoolean("float_on", true).apply();
             flash("懸浮窗：已開（拖標題列搬位；▁ 收埋剩 icon）");
         }
     }
@@ -1711,6 +1889,14 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // 車速牌需要定位權限（未授權時問一次）
+        try {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, 77);
+            }
+        } catch (Throwable ignored) {
+        }
         if (getIntent() != null && getIntent().getBooleanExtra("settings", true)) {
             FloatEqService.settingsOpen = true;      // 由 ⚙ 入嚟
         }

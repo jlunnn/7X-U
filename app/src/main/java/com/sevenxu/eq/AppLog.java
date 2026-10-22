@@ -11,7 +11,12 @@ public final class AppLog {
     private AppLog() {
     }
 
-    public static void d(String tag, String msg) {
+    
+    /** 簡短記錄（ECARX 診斷用）。 */
+    public static void note(String s) {
+        d("ECARX", s);
+    }
+public static void d(String tag, String msg) {
         android.util.Log.d("ZeekrEq/" + tag, msg);
         push(msg);
     }
@@ -38,4 +43,8 @@ public final class AppLog {
             return sb.toString();
         }
     }
+
+    public static void i(String tag, String s) { d(tag, s); }
+
+    public static void w(String tag, String s) { d(tag, s); }
 }

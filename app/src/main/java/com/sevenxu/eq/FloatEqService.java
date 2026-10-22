@@ -53,7 +53,7 @@ public class FloatEqService extends Service {
     private WindowManager.LayoutParams lp;
     private FrameLayout root;
     private LinearLayout panel;
-    private ImageView icon;
+    private View icon;   // 向量繪製（EqIconView）→ 高分清晰
     private BarEqView eqv;
     private TextView preVal;
     private TextView engTv;
@@ -84,6 +84,12 @@ public class FloatEqService extends Service {
         lastTouchAt = System.currentTimeMillis();
     }
     private volatile boolean minimizedNow = false;
+    /** 車速圓牌（跟圓掣顯示，GPS）。 */
+    private SpeedBadge speedBadge;
+    /** 7X info bar（獨立懸浮，可拖）。 */
+    private InfoBarOverlay infoBar;
+    /** 行車卡（油門／腳煞／波段／車速，可自由拖）。 */
+    private DriveCardOverlay driveCard;
     /** service 是否在生（主頁用嚟決定可否真正關窗）。 */
     public static volatile boolean alive = false;
     /** 主頁（由 ⚙ 打開）喺前面時，暫停自動收埋。 */
@@ -764,8 +770,41 @@ public class FloatEqService extends Service {
         });
         head.addView(onBtn);
 
+        // ---- CLOSE APP：用 app 標準掣樣式（Ui.segment，同其他掣完全一致）----
+        final Button closeBtn = Ui.segment(this, "\u2715 KILL APP");
+        closeBtn.setLayoutParams(new LinearLayout.LayoutParams(dp(120), dp(46)));
+        // 螢光灰外框（同 EQ ON 同款粗度，只換色）
+        android.graphics.drawable.GradientDrawable cbg2 = new android.graphics.drawable.GradientDrawable();
+        cbg2.setColor(0xFF1A1F16);
+        cbg2.setCornerRadius(dp(8));
+        cbg2.setStroke(Math.max(2, dp(2)), 0xFFE6EAEE);
+        closeBtn.setBackground(cbg2);
+        closeBtn.setTextColor(0xFFE6EAEE);
+        closeBtn.setOnClickListener(v -> {
+            try {
+                sp.edit().putBoolean("float_on", false).apply();
+                if (sys != null) sys.setEnabled(false);
+            } catch (Throwable ignored) {
+            }
+            try {
+                stopService(new android.content.Intent(FloatEqService.this, FloatEqService.class));
+            } catch (Throwable ignored) {
+            }
+            android.widget.Toast.makeText(this, "7X=U 已終止（Kill App）",
+                    android.widget.Toast.LENGTH_SHORT).show();
+            stopSelf();
+            // 真正 kill：連 process 一齊終止（唔會殘留）
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                } catch (Throwable ignored) {
+                }
+                System.exit(0);
+            }, 600);
+        });
+        head.addView(closeBtn, Math.max(0, head.indexOfChild(onBtn)));   // EQ ON 左邊
         Button min = Ui.segment(this, "");
-        min.setText("✕");
+        min.setText("\u2715");
         // ✕：螢光紅色外框＋每 10 秒閃一下（行車時容易搵）
         final int XRED = 0xFFFF2D55;
         android.graphics.drawable.GradientDrawable xbg = new android.graphics.drawable.GradientDrawable();
@@ -1299,14 +1338,8 @@ public class FloatEqService extends Service {
         root.addView(panel);
 
         // ---- 收埋後嘅 app icon 圓掣 ----
-        icon = new ImageView(this);
-        try {
-            icon.setImageDrawable(getPackageManager().getApplicationIcon(getPackageName()));
-        } catch (Throwable ignored) {
-            icon.setImageResource(android.R.drawable.ic_menu_slideshow);
-        }
-        icon.setBackground(bg(0xCC1E1E1E, iconSize / 2f));
-        icon.setPadding(dp(6), dp(6), dp(6), dp(6));
+        icon = new EqIconView(this);   // 向量圖示：任何 size 都清晰
+        icon.setPadding(0, 0, 0, 0);
         icon.setLayoutParams(new FrameLayout.LayoutParams(iconSize, iconSize));
         icon.setOnClickListener(v -> {
             if (!dragged) setMinimized(false);
@@ -1421,6 +1454,24 @@ public class FloatEqService extends Service {
     /** 收埋 = 只剩 app icon 圓掣（同 app icon 同一個圖）。 */
     private void setMinimized(boolean min) {
         minimizedNow = min;
+        try {
+            // 車速圓牌已取消（HUD 內已有車速）
+            if (speedBadge != null) {
+                speedBadge.hide();
+            }
+            // 上方 info bar 已按用戶要求取消（唔再顯示）；
+            // ECARX 數據（波段／油門／腳煞）改為之後嘅行車卡顯示。
+            if (infoBar != null) {
+                infoBar.hide();
+            }
+            if (min && DriveCardOverlay.enabled(sp)) {
+                if (driveCard == null) driveCard = new DriveCardOverlay(this);
+                driveCard.show();
+            } else if (driveCard != null) {
+                driveCard.hide();
+            }
+        } catch (Throwable ignored) {
+        }
         if (!min) lastTouchAt = System.currentTimeMillis();   // 展開即重新計時（否則即時再收埋）
         if (panel == null || icon == null) return;
         iconSize = iconSizePx();                                 // 每次收／開都跟設定
@@ -1647,6 +1698,8 @@ public class FloatEqService extends Service {
 
     /** 拖動中合併成 ~180 ms 一次；放手（verify）即讀返核實。 */
     private void schedule(final boolean sysToo, final boolean verify) {
+        pokeActivity();      // 任何套用（拖 EQ／撳掣／拉 bar）都重置 15 秒
+
         if (pendingApply != null) ui.removeCallbacks(pendingApply);
         pendingApply = new Runnable() {
             @Override
@@ -1676,6 +1729,8 @@ public class FloatEqService extends Service {
                 }
 
     private void applyNow(boolean verify) {
+        pokeActivity();      // 套用時亦重置
+
         if (sys == null) sys = EqService.get(this);
         if (sys == null) return;
         refreshReadout();
@@ -1702,8 +1757,15 @@ public class FloatEqService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         alive = true;
+        try {
+            String why = intent != null && intent.getStringExtra("why") != null
+                    ? intent.getStringExtra("why") : "start";
+            StartLog.note(this, why);
+        } catch (Throwable ignored) {
+        }
         ensureWindow();
         Watchdog.schedule(this);
+        BootJob.schedule(this);
         // 設定改動（Bass Boost／Limiter／圓掣尺寸）後，重算並套用目前曲線
         try {
             if (dsp != null) schedule(true, true);
@@ -1715,6 +1777,12 @@ public class FloatEqService extends Service {
     @Override
     public void onDestroy() {
         alive = false;
+        try {
+            if (speedBadge != null) speedBadge.hide();
+            if (infoBar != null) infoBar.hide();
+            if (driveCard != null) driveCard.hide();
+        } catch (Throwable ignored) {
+        }
         try {
             if (sp.getBoolean("float_on", true)) {
                 startForegroundService(new android.content.Intent(this, FloatEqService.class));

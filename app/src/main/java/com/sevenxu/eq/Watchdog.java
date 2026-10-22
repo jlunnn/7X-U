@@ -23,14 +23,19 @@ public class Watchdog extends BroadcastReceiver {
                     .getBoolean("float_on", true);
             if (want) {
                 if (Build.VERSION.SDK_INT >= 26) {
-                    c.startForegroundService(new Intent(c, FloatEqService.class));
+                    Intent si = new Intent(c, FloatEqService.class);
+                    si.putExtra("why", "watchdog");
+                    c.startForegroundService(si);
                 } else {
-                    c.startService(new Intent(c, FloatEqService.class));
+                    Intent si2 = new Intent(c, FloatEqService.class);
+                    si2.putExtra("why", "watchdog");
+                    c.startService(si2);
                 }
             }
         } catch (Throwable ignored) {
         }
         schedule(c);
+        BootJob.schedule(c);
     }
 
     /** 排下一次（60 秒後）。任何入口都可以叫。 */

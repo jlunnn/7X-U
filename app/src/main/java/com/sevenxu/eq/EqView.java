@@ -309,6 +309,10 @@ public class EqView extends View {
                 else curve.lineTo(x, y);
             }
             p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(11 * d);                // 深色描邊（任何底色都見到）
+            p.setColor(0xCC000000);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            cv.drawPath(curve, p);
             p.setStrokeWidth(9 * d);                 // 光暈
             p.setColor(0x55B6FF3B);
             p.setStrokeCap(Paint.Cap.ROUND);
