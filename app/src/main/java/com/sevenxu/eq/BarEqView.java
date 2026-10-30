@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
@@ -46,6 +47,8 @@ public class BarEqView extends View {
 
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF r = new RectF();
+    private final Path curve = new Path();
+    private boolean showCurve = true;              // 曲線（預設開，之前係空殼方法 → 永遠唔畫）
     private float d, gutter, padTop, padBottom, top, bottom, plotW, colW, zeroY;
 
     public BarEqView(Context c, Dsp dsp) {
@@ -75,7 +78,8 @@ public class BarEqView extends View {
     }
 
     public void setShowCurve(boolean b) {
-        /* EQ-Control 版面冇曲線 */
+        this.showCurve = b;
+        invalidate();
     }
 
     public void setMicMode(boolean mic) {
@@ -175,6 +179,9 @@ public class BarEqView extends View {
             // （已取消柱頂／柱底圓點：之前遮住 Hz 標籤）
         }
 
+        // 霓虹綠曲線（穿過每段柱頂）
+        drawCurve(cv);
+
         // 每段 dB 值：+ 畫喺柱頂上面、− 畫喺柱底下面（間距 2px）
         p.setTextAlign(Paint.Align.CENTER);
         p.setTextSize(19 * d);                        // dB 字放大兩倍
@@ -196,6 +203,49 @@ public class BarEqView extends View {
         for (int i = 0; i < Bands.N; i++) {
             cv.drawText(Bands.LABEL[i], bandX(i), bottom + 16 * d, p);
         }
+    }
+
+    /** 霓虹綠曲線：穿過每段柱頂（Catmull-Rom 平滑），深色描邊＋光暈，任何底色都見到。 */
+    private void drawCurve(Canvas cv) {
+        if (!showCurve || colW <= 0) return;
+        int n = Bands.N;
+        float[] xs = new float[n];
+        float[] ys = new float[n];
+        for (int i = 0; i < n; i++) {
+            xs[i] = bandX(i);
+            ys[i] = dbY(Math.max(Bands.MIN_DB, Math.min(Bands.MAX_DB, dsp.get(i))));
+        }
+        curve.reset();
+        curve.moveTo(gutter, ys[0]);
+        curve.lineTo(xs[0], ys[0]);
+        for (int i = 0; i < n - 1; i++) {
+            float y0 = (i == 0) ? ys[0] : ys[i - 1];
+            float x1 = xs[i], y1 = ys[i];
+            float x2 = xs[i + 1], y2 = ys[i + 1];
+            float y3 = (i + 2 < n) ? ys[i + 2] : ys[n - 1];
+            float c1y = y1 + (y2 - y0) / 6f;
+            float c2y = y2 - (y3 - y1) / 6f;
+            curve.cubicTo(x1 + colW / 6f, c1y, x2 - colW / 6f, c2y, x2, y2);
+        }
+        curve.lineTo(gutter + plotW, ys[n - 1]);
+
+        cv.save();
+        cv.clipRect(gutter, top - 3 * d, gutter + plotW, bottom + 3 * d);
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeCap(Paint.Cap.ROUND);
+        p.setStrokeJoin(Paint.Join.ROUND);
+        p.setStrokeWidth(12 * d);                     // 深色底描邊
+        p.setColor(0xCC000000);
+        cv.drawPath(curve, p);
+        p.setStrokeWidth(10 * d);                     // 光暈
+        p.setColor(0x55B6FF3B);
+        cv.drawPath(curve, p);
+        p.setStrokeWidth(5 * d);                      // 主線
+        p.setColor(engOn ? NEON : 0xFF6E8A46);
+        cv.drawPath(curve, p);
+        p.setStrokeCap(Paint.Cap.BUTT);
+        p.setStyle(Paint.Style.FILL);
+        cv.restore();
     }
 
     // ------------------------------------------------------------------ 觸控
