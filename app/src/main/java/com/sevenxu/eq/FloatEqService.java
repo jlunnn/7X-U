@@ -181,7 +181,9 @@ public class FloatEqService extends Service {
         // startup sync：開機／著車自動起浮窗時，由 prefs 還原 Bass Boost／Limiter
         try {
             SysEq.bassBoostDb = sp.getInt("bass_boost", 0);
-            SysEq.limiterOn = sp.getBoolean("limiter", false);
+            boolean limPref = sp.getBoolean("limiter", false);
+            if (limPref) DynLimiter.set(true);       // 真 DP limiter（照 v0.30.1）
+            SysEq.limiterOn = limPref && !DynLimiter.available;
         } catch (Throwable ignored) {
         }
         try {
@@ -433,6 +435,7 @@ public class FloatEqService extends Service {
     private void applyCurveChip(String name, float[] g) {
         pokeActivity();
         if (dsp == null || g == null) return;
+        applyExtra(name);                            // 先還原 Bass / DB gain / Volume / Limiter
         for (int i = 0; i < Bands.N && i < g.length; i++) dsp.set(i, g[i]);
         if (eqv != null) {
             eqv.markDirty();
@@ -509,6 +512,54 @@ public class FloatEqService extends Service {
         }
     }
 
+    /** preset 附加狀態：格式 name|bass|preamp|vol|lim;... */
+    private void putExtra(String name) {
+        try {
+            String all = sp.getString("user_extra", "");
+            StringBuilder sb = new StringBuilder();
+            for (String one : all.split(";")) {
+                if (one.isEmpty()) continue;
+                int i = one.lastIndexOf('|');
+                if (i > 0 && !one.substring(0, i).equals(name)) sb.append(one).append(';');
+            }
+            sb.append(name).append('|')
+                    .append(sp.getInt("bass_boost", 0)).append('|')
+                    .append(sp.getInt("preamp", 12)).append('|')
+                    .append(sp.getInt("vol", 70)).append('|')
+                    .append(sp.getBoolean("limiter", false) ? 1 : 0).append(';');
+            sp.edit().putString("user_extra", sb.toString()).apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 還原 preset 附加狀態（舊 preset 冇記錄 → 唔改任何設定）。 */
+    private void applyExtra(String name) {
+        try {
+            String all = sp.getString("user_extra", "");
+            for (String one : all.split(";")) {
+                if (one.isEmpty()) continue;
+                int i = one.lastIndexOf('|');
+                if (i <= 0 || !one.substring(0, i).equals(name)) continue;
+                String[] f = one.substring(i + 1).split("\\|");
+                if (f.length < 4) return;
+                int bass = Integer.parseInt(f[0]);
+                int pre = Integer.parseInt(f[1]);
+                int vol = Integer.parseInt(f[2]);
+                boolean lim = "1".equals(f[3]);
+                sp.edit().putInt("bass_boost", bass).putInt("preamp", pre)
+                        .putInt("vol", vol).putBoolean("limiter", lim).apply();
+                SysEq.bassBoostDb = bass;
+                dsp.setPreampDb(pre - 12);
+                boolean ok = DynLimiter.set(lim);
+                SysEq.limiterOn = lim && !ok;
+                syncPreamp();
+                return;
+            }
+        } catch (Throwable t) {
+            say("還原 preset 附加設定失敗：" + t.getClass().getSimpleName());
+        }
+    }
+
     /** 真正寫入儲存（同主頁共用 prefs user_presets）。 */
     private String saveNow(String name) {
         java.util.Map<String, float[]> u = Presets.readUser(sp.getString("user_presets", ""));
@@ -516,6 +567,7 @@ public class FloatEqService extends Service {
         if (n.isEmpty()) n = "自訂" + (u.size() + 1);
         u.put(n, Presets.parseCsv(sp.getString("gains", "")));
         sp.edit().putString("user_presets", Presets.writeUser(u)).apply();
+        putExtra(n);                                // 一併記錄 Bass / DB gain / Volume / Limiter
         if (chipsRow != null) {                     // 即時加 chip（可即撳即用）
             Button nb = Ui.segment(this, n);
             nb.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
@@ -782,7 +834,7 @@ public class FloatEqService extends Service {
         closeBtn.setTextColor(0xFFE6EAEE);
         closeBtn.setOnClickListener(v -> {
             try {
-                sp.edit().putBoolean("float_on", false).apply();
+                // 唔寫 float_on=false：KILL 只係今次終止，下次著車／開機仍要自動起返
                 if (sys != null) sys.setEnabled(false);
             } catch (Throwable ignored) {
             }
@@ -1291,10 +1343,13 @@ public class FloatEqService extends Service {
         limBtn.setOnClickListener(v -> {
             boolean on = !sp.getBoolean("limiter", false);
             sp.edit().putBoolean("limiter", on).apply();
-            SysEq.limiterOn = on;
+            boolean ok = DynLimiter.set(on);         // 真 DP limiter（session 0, all channels）
+            SysEq.limiterOn = on && !ok;             // DP 成功就唔再用靜態保護
             limBtn.setText(on ? "ON" : "OFF");
             schedule(true, true);
-            say(on ? "Limiter：開（峰值 ≤ -0.5 dBFS）" : "Limiter：關");
+            say(on ? (ok ? "Limiter：開（真限幅 · 0 dBFS / 60ms / 10ms）"
+                        : "Limiter：開（DP 不可用 → 靜態保護）")
+                    : "Limiter：關");
         });
         limRow.addView(limLbl);
         limRow.addView(limBtn);

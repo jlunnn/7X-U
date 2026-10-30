@@ -11,7 +11,7 @@
   每段 **−10 ~ +10 dB**；柱上／柱下顯示每段 dB，並有霓虹綠**級聯響應曲線**。
 - **BASS BOOST**：`0–12 dB`，**每格 1 dB**；80 Hz 以下平滑低架（80 Hz 全量、160 Hz 約 1/5、250 Hz 更少）。
 - **DB GAIN**：前級 `±12 dB`（整體 headroom 控制）。
-- **LIMITER**（預設關）：開啟後若峰值超過 0 dBFS，會自動扣前級避免削波（屬 headroom 保護，非動態壓縮）。
+- **LIMITER**（預設關）：用 Android `DynamicsProcessing` 真限幅（session 0、全聲道，0 dBFS／attack 60ms／release 10ms／ratio ∞，參數對齊業界 EQ v0.30.1）；車機唔支援 DP 時自動退回前級 headroom 保護。
 - **Preset**：`Flat / Vocal / Rock / Pop / V-Shape / Cabin`；可 `💾 儲存` 自訂曲線，
   已存曲線以 chip 顯示 —— **短撳套用**、**長撳確認刪除**。
 - **測試音**（收於 `more`）：`SINE / PINK / WHITE / SWEEP / 1K`。
@@ -27,7 +27,7 @@
 ✕（紅框閃）              Equalizer   ·   EQ ON   ·   ⚙ SETTINGS
   [ 14 條 EQ 柱 ＋ 霓虹綠曲線 ]
   BASS BOOST [====●====] 6 dB  │ more ▾ │  DB GAIN [··●··] +0.0 dB
-  LIMITER  [ON／OFF]
+  LIMITER  [ON／OFF]   ← 自訂 preset 會一併記住 Bass／DB GAIN／VOLUME／LIMITER
   Flat Vocal Rock Pop V-Shape Cabin  💾 儲存  (自訂 chip)
   （more ▾ 展開：SINE / PINK / WHITE / SWEEP / 1K）
 ```
@@ -47,7 +47,7 @@
   （例如 `android.car.permission.CAR_ZEEKR_CONTROL_AUDIO_EFFECT`），第三方側載 app 取唔到。
 - **唔可以改車機媒體音量**：部分車機封鎖 `setStreamVolume`／`adjustStreamVolume`；
   本版已移除此滑桿，請用車機本身音量掣。
-- 「Limiter」為**前級 headroom 保護**，唔係動態壓縮器。
+- 「Limiter」優先用 `DynamicsProcessing` 真限幅；DP 建唔到時退回**前級 headroom 保護**（浮窗會顯示用邊種）。
 - 逐喇叭／DSP 掃描僅供診斷（預設唔會執行）。
 
 ## 安裝
