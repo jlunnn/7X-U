@@ -90,6 +90,7 @@ public class FloatEqService extends Service {
     private InfoBarOverlay infoBar;
     /** 行車卡（油門／腳煞／波段／車速，可自由拖）。 */
     private DriveCardOverlay driveCard;
+    private RedButtonOverlay redButton;
     /** service 是否在生（主頁用嚟決定可否真正關窗）。 */
     public static volatile boolean alive = false;
     /** 主頁（由 ⚙ 打開）喺前面時，暫停自動收埋。 */
@@ -117,6 +118,7 @@ public class FloatEqService extends Service {
     public void onCreate() {
         super.onCreate();
         sp = getSharedPreferences(PREF, MODE_PRIVATE);
+        startForeground();                                // FGS 義務最先行（onCreate 任何早退都唔會 FGS timeout crash）
         if (!Settings.canDrawOverlays(this)) {           // 未授權 → 唔開，主畫面會提示
             stopSelf();
             return;
@@ -130,6 +132,13 @@ public class FloatEqService extends Service {
         if (sys != null && sys.ready()) EqService.start(this);
         startForeground();
         buildWindow();
+        BtBridge.attachService(this);                 // BLE 手勢行浮窗 recallSlot（掣面同步）
+        try {                                         // 藍牙 Zeekr button：綁定咗就想聽 → 自動常駐
+            if (BtBridge.wanted(this) && BtBridge.hasAnyBound(this)) {
+                BtBridge.start(this);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
 
@@ -1431,7 +1440,7 @@ public class FloatEqService extends Service {
                             dragged = true;
                         }
                         lp.x = clampX(nx);
-                        lp.y = clampY(ny);
+                        lp.y = (v == icon) ? clampIconY(ny) : clampY(ny);   // icon Y 冇上下限（3.14）
                         if (lp.x != lastSavedX || lp.y != lastSavedY) {          // 拖動中即刻存
                             lastSavedX = lp.x;
                             lastSavedY = lp.y;
@@ -1475,7 +1484,7 @@ public class FloatEqService extends Service {
             lp.width = iconSize;
             lp.height = iconSize;
             lp.x = clampX(sp.getInt("icon_fx", screenW - inR - iconSize - dp(12)));
-            lp.y = clampY(sp.getInt("icon_fy", (screenH - iconSize) / 2));
+            lp.y = clampIconY(sp.getInt("icon_fy", (screenH - iconSize) / 2));
             AppLog.d("EQ", "pre-add icon at " + lp.x + "," + lp.y);
         }
         // ZERO-FLASH：先隱形 addView，定位好之後才顯示（避免半秒閃左上）
@@ -1506,6 +1515,11 @@ public class FloatEqService extends Service {
         return Math.max(min, Math.min(y, max));
     }
 
+    /** 綠 EQ 圓掣：X 照 clamp（左右限制照舊），Y 冇上下限制（3.14 用戶要求取消 offset 限制區）。 */
+    private int clampIconY(int y) {
+        return y;
+    }
+
     /** 收埋 = 只剩 app icon 圓掣（同 app icon 同一個圖）。 */
     private void setMinimized(boolean min) {
         minimizedNow = min;
@@ -1525,6 +1539,14 @@ public class FloatEqService extends Service {
             } else if (driveCard != null) {
                 driveCard.hide();
             }
+            // 紅色螢光懸浮制（後霧燈快掣）：EQ 圓掣收埋時一齊現身
+            if (min && RedButtonOverlay.enabled(sp)) {
+                if (redButton == null) redButton = new RedButtonOverlay(this);
+                redButton.refreshSize();
+                redButton.show();
+            } else if (redButton != null) {
+                redButton.hide();
+            }
         } catch (Throwable ignored) {
         }
         if (!min) lastTouchAt = System.currentTimeMillis();   // 展開即重新計時（否則即時再收埋）
@@ -1538,7 +1560,7 @@ public class FloatEqService extends Service {
         if (min) {                                               // 收埋 = 返去上次圓掣位置
             lp.x = clampX(sp.getInt("icon_fx", screenW - inR - iconSize - dp(12)));
             AppLog.d("EQ", "icon restored " + lp.x + "," + lp.y);
-            lp.y = clampY(sp.getInt("icon_fy", (screenH - iconSize) / 2));
+            lp.y = clampIconY(sp.getInt("icon_fy", (screenH - iconSize) / 2));
         } else {                                                 // 展開 = 返去上次面板位置
             lp.x = clampX(sp.getInt(K_X, lp.x));
             lp.y = clampY(sp.getInt(K_Y, lp.y));
@@ -1829,19 +1851,39 @@ public class FloatEqService extends Service {
         return START_STICKY;   // 被系統殺都自動重開（圓掣長期顯示）
     }
 
+    /** BLE 手勢行 A/B/C 曲線（行返原本 recallSlot：UI／abActive 同步）。 */
+    public void bridgeRecallSlot(String key) {
+        try {
+            ui.post(() -> recallSlot(key));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** BLE 手勢收埋浮窗（同 minimize 掣一樣）。 */
+    public void bridgeMinimize() {
+        try {
+            ui.post(() -> setMinimized(true));
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Override
     public void onDestroy() {
         alive = false;
+        BtBridge.detachService();
         try {
             if (speedBadge != null) speedBadge.hide();
             if (infoBar != null) infoBar.hide();
             if (driveCard != null) driveCard.hide();
+            if (redButton != null) redButton.hide();
         } catch (Throwable ignored) {
         }
         try {
-            if (sp.getBoolean("float_on", true)) {
-                startForegroundService(new android.content.Intent(this, FloatEqService.class));
-            }
+            // 自我重啟已移除（3.11 根治）：onDestroy 入面 startForegroundService
+            // 喺 stop 進行中 re-arm FGS 義務，系統唔派新 onCreate → startForeground()
+            // 永遠唔行 → 20 秒 FGS timeout crash（MuMu 兩單實測）。保持存活交畀
+            // 現有三層：START_STICKY＋Watchdog（60 秒 alarm，float_on=true 先起）
+            // ＋開機／解鎖 receiver（著車 SCREEN_ON/USER_PRESENT → autoShowMinimized）。
         } catch (Throwable ignored) {
         }
         tone.stop();

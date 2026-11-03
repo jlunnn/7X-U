@@ -234,13 +234,13 @@ public class BarEqView extends View {
         p.setStyle(Paint.Style.STROKE);
         p.setStrokeCap(Paint.Cap.ROUND);
         p.setStrokeJoin(Paint.Join.ROUND);
-        p.setStrokeWidth(12 * d);                     // 深色底描邊
+        p.setStrokeWidth(7 * d);                      // 深色底描邊
         p.setColor(0xCC000000);
         cv.drawPath(curve, p);
-        p.setStrokeWidth(10 * d);                     // 光暈
+        p.setStrokeWidth(6 * d);                      // 光暈
         p.setColor(0x55B6FF3B);
         cv.drawPath(curve, p);
-        p.setStrokeWidth(5 * d);                      // 主線
+        p.setStrokeWidth(2.5f * d);                   // 主線
         p.setColor(engOn ? NEON : 0xFF6E8A46);
         cv.drawPath(curve, p);
         p.setStrokeCap(Paint.Cap.BUTT);

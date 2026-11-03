@@ -87,6 +87,12 @@ public class MainActivity extends AppCompatActivity {
     private Button sweepUp, sweepDown;
     private TextView sweepSum, sweepOut, sweepLine;
     private LinearLayout sweepPage;
+    private LinearLayout btPage;
+    private android.widget.ScrollView mainWrap;   // 包住 mainPage 嘅 ScrollView（3.6 加）— 轉頁時要一併收埋，唔係會食住全屏推走其他頁
+    private Runnable pendingBtScan;               // 位置權限批准後自動補跑嘅掃描
+    private TextView btStatus;
+    private TextView btGest;
+    private Button btToggleBtn;
     private boolean settingsOn;
     private volatile boolean sweeping = false;
     private boolean syncing;
@@ -170,8 +176,11 @@ public class MainActivity extends AppCompatActivity {
         sweepPage = (LinearLayout) buildSweepPage();
         sweepPage.setVisibility(View.GONE);
 
+        btPage = (LinearLayout) buildBtPage();
+        btPage.setVisibility(View.GONE);
+
         // 主頁而家載住設定內容 → 要可捲
-        android.widget.ScrollView mainWrap = new android.widget.ScrollView(this);
+        mainWrap = new android.widget.ScrollView(this);
         mainWrap.setFillViewport(true);
         mainWrap.addView(mainPage, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -180,6 +189,8 @@ public class MainActivity extends AppCompatActivity {
         container.addView(settingsPageWrap, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0));
         container.addView(sweepPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        container.addView(btPage, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0));
         setContentView(container);
         sp.edit().remove("auto_sweep").apply();
@@ -462,6 +473,107 @@ public class MainActivity extends AppCompatActivity {
                     if (floatOn) FloatEqService.show(MainActivity.this);
                     flash(v ? "無操作自動收埋：開（15 秒）" : "無操作自動收埋：關");
                 }));
+        // 紅色螢光懸浮制（後霧燈 21050500 快掣）
+        card.addView(settingRow(30, "紅色螢光懸浮制（後霧燈）", "撳一下＝後霧燈閃動；同 EQ 圓掣一齊出現、可拖",
+                RedButtonOverlay.enabled(sp), v -> {
+                    sp.edit().putBoolean("fog_red_enabled", v).apply();
+                    if (floatOn) FloatEqService.show(MainActivity.this);
+                    flash(v ? "紅色螢光懸浮制：開" : "紅色螢光懸浮制：關");
+                }));
+
+        // 紅掣節奏設定（閃開/閃關時間＋次數 2–10）— VolBar slider row，照超速門檻風格
+        LinearLayout fogOnRow = Ui.row(this);
+        fogOnRow.addView(Ui.label(this, "閃開時間"));
+        final TextView fogOnVal = Ui.text(this, "", 13f, Ui.TEXT);
+        fogOnVal.setMinWidth(Ui.dp(this, 76));
+        fogOnVal.setGravity(Gravity.CENTER);
+        final VolBar fogOnBar = new VolBar(this);
+        fogOnBar.setMax(100);                                  // 100–1000 ms
+        int fon = Math.max(100, Math.min(1000, sp.getInt("fog_on_ms", 350)));
+        fogOnBar.setProgress(Math.round((fon - 100) / 900f * 100f));
+        fogOnVal.setText(fon + " ms");
+        fogOnBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                fogOnVal.setText((100 + v * 9) + " ms");
+            }
+
+            public void onStartTrackingTouch(android.widget.SeekBar s) {
+            }
+
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int ms = 100 + s.getProgress() * 9;
+                sp.edit().putInt("fog_on_ms", ms).apply();
+                flash("閃開時間：" + ms + " ms");
+            }
+        });
+        LinearLayout.LayoutParams foLp = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        foLp.leftMargin = Ui.dp(this, 10);
+        foLp.rightMargin = Ui.dp(this, 10);
+        fogOnRow.addView(fogOnBar, foLp);
+        fogOnRow.addView(fogOnVal);
+        card.addView(fogOnRow);
+
+        LinearLayout fogOffRow = Ui.row(this);
+        fogOffRow.addView(Ui.label(this, "閃關時間"));
+        final TextView fogOffVal = Ui.text(this, "", 13f, Ui.TEXT);
+        fogOffVal.setMinWidth(Ui.dp(this, 76));
+        fogOffVal.setGravity(Gravity.CENTER);
+        final VolBar fogOffBar = new VolBar(this);
+        fogOffBar.setMax(100);                                 // 100–1000 ms
+        int foff = Math.max(100, Math.min(1000, sp.getInt("fog_off_ms", 350)));
+        fogOffBar.setProgress(Math.round((foff - 100) / 900f * 100f));
+        fogOffVal.setText(foff + " ms");
+        fogOffBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                fogOffVal.setText((100 + v * 9) + " ms");
+            }
+
+            public void onStartTrackingTouch(android.widget.SeekBar s) {
+            }
+
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int ms = 100 + s.getProgress() * 9;
+                sp.edit().putInt("fog_off_ms", ms).apply();
+                flash("閃關時間：" + ms + " ms");
+            }
+        });
+        LinearLayout.LayoutParams ffLp = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        ffLp.leftMargin = Ui.dp(this, 10);
+        ffLp.rightMargin = Ui.dp(this, 10);
+        fogOffRow.addView(fogOffBar, ffLp);
+        fogOffRow.addView(fogOffVal);
+        card.addView(fogOffRow);
+
+        LinearLayout fogCntRow = Ui.row(this);
+        fogCntRow.addView(Ui.label(this, "閃動次數"));
+        final TextView fogCntVal = Ui.text(this, "", 13f, Ui.TEXT);
+        fogCntVal.setMinWidth(Ui.dp(this, 76));
+        fogCntVal.setGravity(Gravity.CENTER);
+        final VolBar fogCntBar = new VolBar(this);
+        fogCntBar.setMax(8);                                   // 2–10 吓
+        int fcnt = RedButtonOverlay.count(sp);
+        fogCntBar.setProgress(fcnt - 2);
+        fogCntVal.setText(fcnt + " 吓");
+        fogCntBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(android.widget.SeekBar s, int v, boolean fromUser) {
+                fogCntVal.setText((2 + v) + " 吓");
+            }
+
+            public void onStartTrackingTouch(android.widget.SeekBar s) {
+            }
+
+            public void onStopTrackingTouch(android.widget.SeekBar s) {
+                int n = 2 + s.getProgress();
+                sp.edit().putInt("fog_count", n).apply();
+                flash("閃動次數：" + n + " 吓");
+            }
+        });
+        LinearLayout.LayoutParams fcLp = new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f);
+        fcLp.leftMargin = Ui.dp(this, 10);
+        fcLp.rightMargin = Ui.dp(this, 10);
+        fogCntRow.addView(fogCntBar, fcLp);
+        fogCntRow.addView(fogCntVal);
+        card.addView(fogCntRow);
 
 
 
@@ -699,7 +811,311 @@ public class MainActivity extends AppCompatActivity {
         return r;
     }
 
-    /** 全屏「逐段自檢結果」頁（大字總結 ＋ 逐行結果）。 */
+    // ============================================================ 藍牙頁（Zeekr button）
+
+    /** 藍牙頁：綁定 Zeekr button ＋ 手勢（單擊／雙擊；3.13 起長按停用）→ 動作（含紅掣）。 */
+    private View buildBtPage() {
+        LinearLayout p = Ui.col(this);
+        p.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
+
+        // 標題列：藍牙 logo ＋ 返主頁
+        LinearLayout head = Ui.row(this);
+        TextView logo = Ui.text(this, "🔵", 40f, Ui.ACCENT);
+        head.addView(logo);
+        head.addView(space(10));
+        head.addView(Ui.title(this, "藍牙"));
+        head.addView(space(16));
+        head.addView(Ui.text(this, "Zeekr button", 14f, Ui.DIM));
+        head.addView(space(0, 1f));
+        Button back = Ui.segment(this, "← 返回");
+        back.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 132), Ui.dp(this, 46)));
+        back.setOnClickListener(v -> showBt(false));
+        head.addView(back);
+        p.addView(head);
+        p.addView(Ui.divider(this));
+
+        // ---- 卡 1：綁定＋監聽（3.12 多粒：最多 2 粒）----
+        LinearLayout c1 = Ui.card(this);
+        btStatus = Ui.text(this, "", 15f, Ui.TEXT);
+        c1.addView(btStatus);
+        LinearLayout bindRow = Ui.row(this);
+        bindRow.setPadding(0, Ui.dp(this, 8), 0, 0);
+        scanBtn = Ui.segment(this, "");
+        scanBtn.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 220), Ui.dp(this, 46)));
+        scanBtn.setOnClickListener(v -> scanBtButton(null));
+        bindRow.addView(scanBtn);
+        unbindBtn = Ui.segment(this, "🗑 解除");
+        LinearLayout.LayoutParams ubLp = new LinearLayout.LayoutParams(Ui.dp(this, 120), Ui.dp(this, 46));
+        ubLp.leftMargin = Ui.dp(this, 10);
+        unbindBtn.setLayoutParams(ubLp);
+        unbindBtn.setOnClickListener(v -> {
+            if (!BtBridge.hasAnyBound(this)) {
+                flash("未綁定任何 button");
+                return;
+            }
+            if (BtBridge.boundMacs(this).length < 2) {
+                BtBridge.unbindAt(this, 0);
+                BtBridge.stop(this);
+                syncBtUi();
+                flash("已解除綁定");
+                return;
+            }
+            String[] opts = new String[]{"粒1：" + BtBridge.nameAt(this, 0) + "（" + BtBridge.macAt(this, 0) + "）",
+                    "粒2：" + BtBridge.nameAt(this, 1) + "（" + BtBridge.macAt(this, 1) + "）"};
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("解除邊粒？")
+                    .setItems(opts, (d, which) -> {
+                        BtBridge.unbindAt(this, which);
+                        if (BtBridge.running) {
+                            BtBridge.stop(this);
+                            if (BtBridge.hasAnyBound(this)) {
+                                BtBridge.start(this);        // 重掛起監聽（新 MAC 清單）
+                            }
+                        }
+                        syncBtUi();
+                        flash("已解除：粒" + (which + 1));
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        });
+        bindRow.addView(unbindBtn);
+        c1.addView(bindRow);
+        LinearLayout listenRow = Ui.row(this);
+        listenRow.setPadding(0, Ui.dp(this, 10), 0, 0);
+        btToggleBtn = Ui.segment(this, "");
+        btToggleBtn.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 220), Ui.dp(this, 46)));
+        btToggleBtn.setOnClickListener(v -> {
+            boolean on = BtBridge.running;
+            if (on) {
+                BtBridge.stop(this);
+            } else {
+                if (!BtBridge.hasAnyBound(this)) {
+                    flash("未綁定裝置，先掃描綁定");
+                    return;
+                }
+                BtBridge.start(this);
+            }
+            syncBtUi();
+        });
+        listenRow.addView(btToggleBtn);
+        TextView hint = Ui.text(this, "只聽廣播，唔連接 — 唔影響車機藍牙配對", 13f, Ui.DIM);
+        LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        hLp.leftMargin = Ui.dp(this, 10);
+        hint.setLayoutParams(hLp);
+        listenRow.addView(hint);
+        c1.addView(listenRow);
+        p.addView(c1);
+
+        // ---- 卡 2：手勢 → 動作（3.12：每粒獨立，「設定對象」揀緊邊粒）----
+        LinearLayout c2 = Ui.card(this);
+        c2.addView(Ui.label(this, "手勢 → 動作（撳一下改）"));
+        slotRow = Ui.row(this);
+        slotRow.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
+        slotBtn = new Button[2];
+        for (int s = 0; s < 2; s++) {
+            final int sl = s;
+            slotBtn[s] = Ui.segment(this, "");
+            slotBtn[s].setLayoutParams(new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+            slotBtn[s].setOnClickListener(v -> {
+                BtBridge.saveUiSlot(this, sl);
+                syncBtUi();
+                flash("設定對象：粒" + (sl + 1));
+            });
+            slotRow.addView(slotBtn[s]);
+        }
+        c2.addView(slotRow);
+        String[] names = BtBridge.GESTURE_NAMES;
+        for (int i = 0; i < names.length; i++) {
+            final int gi = i;
+            Button g = Ui.segment(this, "");
+            g.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+            g.setOnClickListener(v -> pickAction(gi));
+            c2.addView(g);
+            gestBtns.add(g);
+        }
+        p.addView(c2);
+
+        // ---- 卡 3：狀態（診斷） ----
+        LinearLayout c3 = Ui.card(this);
+        btGest = Ui.text(this, "", 13f, Ui.DIM);
+        btGest.setTypeface(android.graphics.Typeface.MONOSPACE);
+        c3.addView(btGest);
+        Button refresh = Ui.segment(this, "🔄 更新狀態");
+        refresh.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 220), Ui.dp(this, 46)));
+        refresh.setOnClickListener(v -> syncBtUi());
+        c3.addView(refresh);
+        p.addView(c3);
+        return p;
+    }
+
+    private final java.util.List<Button> gestBtns = new java.util.ArrayList<>();
+    private LinearLayout slotRow;
+    private Button[] slotBtn;
+    private Button scanBtn;
+    private Button unbindBtn;
+
+    /** 狀態字＋手勢列＋監聽掣同步。 */
+    private void syncBtUi() {
+        if (btStatus == null) return;
+        try {
+            String m1 = BtBridge.macAt(this, 0);
+            String n1 = BtBridge.nameAt(this, 0);
+            String m2 = BtBridge.macAt(this, 1);
+            String n2 = BtBridge.nameAt(this, 1);
+            btStatus.setText("粒1：" + (m1.isEmpty() ? "未綁定" : n1 + "\n　　　" + m1)
+                    + "\n粒2：" + (m2.isEmpty() ? "未綁定" : n2 + "\n　　　" + m2));
+            if (scanBtn != null) {
+                int bound = BtBridge.boundMacs(this).length;
+                scanBtn.setText(bound >= 2 ? "📡 已綁 2 粒（滿）" : "📡 加綁 button");
+                scanBtn.setEnabled(bound < 2);
+            }
+            if (unbindBtn != null) {
+                unbindBtn.setEnabled(BtBridge.hasAnyBound(this));
+            }
+            int ui = BtBridge.loadUiSlot(this);
+            for (int i = 0; i < gestBtns.size(); i++) {
+                int a = BtBridge.action(this, ui, i);
+                gestBtns.get(i).setText(BtBridge.GESTURE_NAMES[i] + " → "
+                        + (a >= 0 && a < BtBridge.LABELS.length ? BtBridge.LABELS[a] : "未設定"));
+            }
+            if (slotBtn != null) {
+                for (int sb2 = 0; sb2 < 2; sb2++) {
+                    String mm = sb2 == 0 ? m1 : m2;
+                    slotBtn[sb2].setText((mm.isEmpty() ? "粒" + (sb2 + 1) + "（未綁）" : "粒" + (sb2 + 1))
+                            + (ui == sb2 ? " ●" : ""));
+                    Ui.setAccent(slotBtn[sb2], ui == sb2);
+                }
+            }
+            if (btToggleBtn != null) {
+                boolean on = BtBridge.running;
+                btToggleBtn.setText(on ? "⏹ 停止監聽（現正 ● 監聽中）" : "▶ 開始監聽");
+                Ui.setAccent(btToggleBtn, on);
+            }
+            if (btGest != null) {
+                String st = BtBridge.running ? BtBridge.state : "已停";
+                String err = BleScan.rawError == null ? "" : BleScan.rawError;
+                String last = BtBridge.lastCode == null || BtBridge.lastCode.isEmpty() ? "—"
+                        : BtBridge.lastCode;
+                long ago = BtBridge.lastAt == 0 ? 0
+                        : (System.currentTimeMillis() - BtBridge.lastAt) / 1000;
+                btGest.setText("狀態：" + st + (err.isEmpty() ? "" : "　⚠ " + err) + "\n最近廣播：" + last
+                        + (BtBridge.lastAt == 0 ? "" : "（" + ago + " 秒前）")
+                        + "\n累計：" + BtBridge.count);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 手勢 → 揀動作（清單 = BtBridge.LABELS）。 */
+    private void pickAction(final int gesture) {
+        try {
+            final int ui = BtBridge.loadUiSlot(this);
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("粒" + (ui + 1) + "「" + BtBridge.GESTURE_NAMES[gesture] + "」做咩？")
+                    .setItems(BtBridge.LABELS, (d, which) -> {
+                        BtBridge.setAction(this, ui, gesture, which);
+                        syncBtUi();
+                        flash("已設定（粒" + (ui + 1) + "）：" + BtBridge.GESTURE_NAMES[gesture]
+                                + " → " + BtBridge.LABELS[which]);
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        } catch (Throwable t) {
+            flash("開唔到：" + t.getClass().getSimpleName());
+        }
+    }
+
+    /** 掃描 BLE，列出裝置俾用戶揀（撳一下就綁定）。 */
+    private void scanBtButton(final Runnable after) {
+        // Android 9：BLE 掃描要位置權限，冇授權會靜默失敗（掃到 0 個）→ 先問一次
+        try {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                pendingBtScan = after;
+                requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, 77);
+                flash("先批准「位置」權限（BLE 掃描用），批准咗會自動再掃");
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+        final java.util.ArrayList<String[]> found = new java.util.ArrayList<>();
+        final android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this)
+                .setTitle("📡 掃描中…（10 秒）")
+                .setNegativeButton("取消", null)
+                .create();
+        dlg.show();
+        try {
+            BleScan.startScan(this, new BleScan.L() {
+                @Override
+                public void onDevice(String name, String mac, int rssi, String uuids, int txPower) {
+                    boolean dup = false;
+                    for (String[] f : found) {
+                        if (f[1].equals(mac)) {
+                            dup = true;
+                            break;
+                        }
+                    }
+                    if (dup) {
+                        return;
+                    }
+                    found.add(new String[]{name, mac, String.valueOf(rssi)});
+                    runOnUiThread(() -> dlg.setTitle("📡 已見 " + found.size() + " 個裝置（撳一下綁定）"));
+                }
+
+                @Override
+                public void onLog(String line) {
+                    if (line != null && !line.isEmpty()) {
+                        flash(line);       // 掃描問題要見到（唔好靜默失敗）
+                    }
+                }
+
+                @Override
+                public void onDone(String summary) {
+                    runOnUiThread(() -> {
+                        BleScan.stopScan();
+                        dlg.dismiss();
+                        if (found.isEmpty()) {
+                            flash(summary != null && summary.startsWith("❌")
+                                    ? summary
+                                    : "❌ 掃唔到裝置（確認 Zeekr button 有電＋藍牙開）");
+                            return;
+                        }
+                        String[] items = new String[found.size()];
+                        for (int i = 0; i < found.size(); i++) {
+                            items[i] = found.get(i)[0] + "  " + found.get(i)[1]
+                                    + "  " + found.get(i)[2] + "dBm";
+                        }
+                        new androidx.appcompat.app.AlertDialog.Builder(MainActivity.this)
+                                .setTitle("揀 Zeekr Button（核對個名，附近可能有撞名裝置）")
+                                .setItems(items, (d, which) -> {
+                                    String[] f = found.get(which);
+                                    int slot = BtBridge.firstFreeSlot(MainActivity.this);
+                                    if (slot < 0) {
+                                        flash("已綁 2 粒（滿）— 先解除先可以加綁");
+                                        return;
+                                    }
+                                    BtBridge.bindAt(MainActivity.this, slot, f[1], f[0]);
+                                    BtBridge.setWanted(MainActivity.this, true);
+                                    BtBridge.start(MainActivity.this);
+                                    syncBtUi();
+                                    flash("✅ 已綁定粒" + (slot + 1) + "：" + f[0] + "（" + f[1] + "）｜常駐監聽已開");
+                                    if (after != null) {
+                                        after.run();
+                                    }
+                                })
+                                .setNegativeButton("取消", null)
+                                .show();
+                    });
+                }
+            });
+        } catch (Throwable t) {
+            dlg.dismiss();
+            flash("❌ 掃描失敗：" + t.getClass().getSimpleName());
+        }
+    }
+
     private View buildSweepPage() {
         LinearLayout p = Ui.col(this);
         p.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 16), Ui.dp(this, 10));
@@ -728,8 +1144,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void showSweep(boolean on) {
         if (mainPage == null || settingsPage == null || sweepPage == null) return;
+        if (mainWrap != null) mainWrap.setVisibility(on || settingsOn ? View.GONE : View.VISIBLE);
         mainPage.setVisibility(on || settingsOn ? View.GONE : View.VISIBLE);
         if (settingsPageWrap != null) settingsPageWrap.setVisibility(on ? View.GONE : View.VISIBLE);
+        if (btPage != null) btPage.setVisibility(View.GONE);
         if (on) {
             settingsPage.setVisibility(View.GONE);
             sweepPage.setVisibility(View.VISIBLE);
@@ -814,13 +1232,29 @@ public class MainActivity extends AppCompatActivity {
     private void showSettings(boolean on) {
         if (mainPage == null || settingsPage == null) return;
         settingsOn = on;
+        if (mainWrap != null) mainWrap.setVisibility(on ? View.GONE : View.VISIBLE);
         mainPage.setVisibility(on ? View.GONE : View.VISIBLE);
         settingsPage.setVisibility(on ? View.VISIBLE : View.GONE);
         if (settingsPageWrap != null) settingsPageWrap.setVisibility(on ? View.VISIBLE : View.GONE);
         if (sweepPage != null) sweepPage.setVisibility(View.GONE);
+        if (btPage != null) btPage.setVisibility(View.GONE);
         if (on) stopPulse();
         else refreshSysUi();
         flash(on ? "設定頁（⚠️ = 有車機限制）" : "主頁");
+    }
+
+    /** 藍牙頁（Zeekr button 綁定＋手勢→動作）。 */
+    private void showBt(boolean on) {
+        if (mainPage == null || settingsPage == null || btPage == null) return;
+        settingsOn = false;
+        if (mainWrap != null) mainWrap.setVisibility(on ? View.GONE : View.VISIBLE);
+        mainPage.setVisibility(on ? View.GONE : View.VISIBLE);
+        settingsPage.setVisibility(View.GONE);
+        if (settingsPageWrap != null) settingsPageWrap.setVisibility(View.GONE);
+        if (sweepPage != null) sweepPage.setVisibility(View.GONE);
+        btPage.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (on) syncBtUi();
+        flash(on ? "藍牙 Zeekr button" : "主頁");
     }
 
     /** 第 1 行：標題 + 系統（媒體音樂）EQ 狀態。 */
@@ -854,6 +1288,14 @@ public class MainActivity extends AppCompatActivity {
         gearBtn.setOnClickListener(v -> showSettings(true));
         gearBtn.setVisibility(View.GONE);      // 設定已搬上主頁
         r.addView(gearBtn);
+
+        // 藍牙 → 藍牙頁（Zeekr button 綁定＋手勢設定）
+        android.widget.Button btBtn = Ui.segment(this, "🔵 藍牙");
+        LinearLayout.LayoutParams btLp = new LinearLayout.LayoutParams(Ui.dp(this, 132), Ui.dp(this, 46));
+        btLp.leftMargin = Ui.dp(this, 10);
+        btBtn.setLayoutParams(btLp);
+        btBtn.setOnClickListener(v -> showBt(true));
+        r.addView(btBtn);
         return hbar(r, 50);
     }
 
@@ -1866,6 +2308,20 @@ public class MainActivity extends AppCompatActivity {
             }
         } else if (code == 1) {
             flash(ok ? "已批准讀取音檔，再撳「📂 選檔」" : "未批准讀取音檔權限（可以放檔案入 app 內部資料夾）");
+        } else if (code == 77) {
+            if (ok) {
+                if (pendingBtScan != null) {
+                    Runnable r = pendingBtScan;
+                    pendingBtScan = null;
+                    flash("位置權限已批准 — 自動再掃…");
+                    scanBtButton(r);
+                } else {
+                    flash("位置權限已批准");
+                }
+            } else {
+                pendingBtScan = null;
+                flash("冇「位置」權限 — BLE 掃描會掃唔到嘢（Android 9 限制）");
+            }
         }
     }
 

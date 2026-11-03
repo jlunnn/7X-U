@@ -768,7 +768,8 @@ final public class EcarxSource {
 
     // ================================================================= 反射小工具
 
-    private static Object call(Object target, String name) {
+    /** 調一下無參方法；package 共用（RedButtonOverlay 寫後霧燈都用佢）。 */
+    static Object call(Object target, String name) {
         Method m = findMethod(target, name);
         if (m == null) {
             return null;
@@ -876,7 +877,7 @@ final public class EcarxSource {
         }
     }
 
-    private static Method match(Method[] methods, String name, Class<?>... params) {
+    static Method match(Method[] methods, String name, Class<?>... params) {
         for (Method m : methods) {
             if (!m.getName().equals(name)) {
                 continue;
@@ -900,7 +901,7 @@ final public class EcarxSource {
     }
 
     /** 反射那一層剝掉，露出真正的原因。 */
-    private static String describe(Throwable e) {
+    static String describe(Throwable e) {
         Throwable t = e;
         while ((t instanceof InvocationTargetException || t instanceof UndeclaredThrowableException)
                 && t.getCause() != null) {
