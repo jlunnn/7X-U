@@ -255,7 +255,7 @@ public class FloatEqService extends Service {
                     ? new Notification.Builder(this, CH) : new Notification.Builder(this);
             b.setContentTitle("7X=U 懸浮 EQ").setContentText("行車 EQ 懸浮窗運作中")
                     .setSmallIcon(android.R.drawable.ic_menu_slideshow).setOngoing(true);
-            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTI_ID, b.build(), 32);
+            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTI_ID, b.build());   // 2-arg：跟 manifest mediaPlayback（3-arg 32=mediaProjection 會喺 Android 14+ 食 InvalidFGS type → FGS timeout crash）
             else startForeground(NOTI_ID, b.build());
         } catch (Throwable ignored) {
         }

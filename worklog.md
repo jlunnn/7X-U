@@ -27,3 +27,11 @@
   即全屏上下都拖得）；拖放／pre-add／setMinimized 三路徑全用；X 與面板 clamp 照舊。
 - MainActivity 手勢列顯示 LABELS[...] 已有 guard（981），pickAction 單項。
 - 版號 196 / "3.14"。
+- 收尾修正（MuMu regression 期間抓到）：FloatEqService.startForeground() 舊 call 用 3-arg
+  startForeground(id, noti, 32)，32＝FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION，與 manifest
+  申報 mediaPlayback 不符。Android 12（舊 MuMu）不驗證冇事；Android 14+ 驗證 → startForeground
+  拋例外被 catch(Throwable) 吞 → 30 秒 FGS timeout → ForegroundServiceDidNotStartInTime crash
+  loop（Watchdog 重啟再爆）。改 2-arg startForeground(id, noti) 跟 manifest 類型。
+- MuMu 實測（install OK）：紅掣 overlay 拖放 (600,384)→(600,1184) 受控（clampY 底限 1184=
+  1280-96 吻合）；crash 來源確認係 FGS type bug（非 3.14 改動）。EQ icon 拖動喺 MuMu 上
+  未能重現（模擬器全屏 overlay 窗疑似食 touch；GPU 保護提前收工，實車為準）。
