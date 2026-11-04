@@ -43,6 +43,40 @@ final class BleScan {
     private static BluetoothLeScanner scanner;
     /** 最近一次常駐掃描錯誤（空字串＝正常）— 藍牙頁狀態卡顯示用。 */
     static volatile String rawError = "";
+    // 3.15 auto-rearm：onScanFailed 後唔可以死咗唔自癒（問③根因）— backoff 自動重掛起；
+    // 5 分鐘心跳定期開新掃描 session（BT stack 靜默死掃描都會翻生）；
+    // BT 開關 receiver：車機熄／開藍牙即刻重新掛起監聽。
+    static volatile long rawRearmCount;          // auto-rearm 次數（診斷顯示用）
+    static volatile long lastRearmAt;            // 最近一次 auto-rearm 時間
+    private static final long[] REARM_DELAYS = {1_000L, 3_000L, 10_000L, 30_000L};   // ms backoff
+    private static volatile int rearmAttempt;
+    private static final Handler mainH = new Handler(Looper.getMainLooper());
+    private static Runnable heartbeat;
+    private static Runnable pendingRearm;
+    private static final android.content.BroadcastReceiver btStateRx =
+            new android.content.BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, android.content.Intent i) {
+                    String a = i == null ? "" : i.getAction();
+                    if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(a)) {
+                        int st = i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1);
+                        if (st == BluetoothAdapter.STATE_ON) {
+                            AppLog.i("BleScan", "BT 開返 → 重新掛起常駐監聽");
+                            rearmNow();
+                        } else if (st == BluetoothAdapter.STATE_OFF
+                                || st == BluetoothAdapter.STATE_TURNING_OFF) {
+                            mainH.removeCallbacks(heartbeat);
+                            mainH.removeCallbacks(pendingRearm);
+                        }
+                    } else if ("android.bluetooth.adapter.action.BLE_STATE_CHANGED".equals(a)) {
+                        int st2 = i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1);
+                        if (st2 == BluetoothAdapter.STATE_ON) {
+                            AppLog.i("BleScan", "BLE 開返 → 重新掛起常駐監聽");
+                            rearmNow();
+                        }
+                    }
+                }
+            };
 
     static boolean scanning() {
         return scanning;
@@ -126,7 +160,7 @@ final class BleScan {
             };
             scanner.startScan(null, st, currentCb);
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                stopScan();
+                BleScan.stopScan();
                 l.onDone("🔎 掃描完（" + seconds + " 秒）：收到 " + seenCount + " 個廣播");
             }, seconds * 1000L);
         } catch (Throwable t) {
@@ -150,16 +184,86 @@ final class BleScan {
 
     // ============================================================ 常駐監聽廣播（唔連接）
 
+    private static String[] rawMacs;             // 最近一次 startRaw 參數（auto-rearm 用）
+    private static R rawListen;
+    private static int rawSeconds;
+    private static volatile boolean btRxRegistered;
+    private static final long HEARTBEAT_MS = 300_000L;   // 5 分鐘心跳：強制開新掃描 session
+
+    /** auto-rearm：即刻停掃再開過（新 session）。BT 熄咗／冇綁定 → 唔重掃。 */
+    private static void rearmNow() {
+        mainH.post(() -> {
+            if (rawListen == null) {
+                return;                          // 冇常駐監聽要救
+            }
+            stopRaw();
+            startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+        });
+    }
+
+    /** auto-rearm（backoff 延遲）：1s → 3s → 10s → 30s 上限，直到掃返着為止。 */
+    private static void rearmLater() {
+        mainH.removeCallbacks(pendingRearm);
+        final int n = rearmAttempt;
+        long d = REARM_DELAYS[Math.min(n, REARM_DELAYS.length - 1)];
+        rearmAttempt = Math.min(n + 1, REARM_DELAYS.length - 1);
+        pendingRearm = () -> {
+            if (rawListen != null) {
+                rawRearmCount++;                 // 診斷計數：呢個 loop 真係翻生過幾多次
+                lastRearmAt = System.currentTimeMillis();
+                AppLog.w("BleScan", "auto-rearm（延遲 " + d + "ms）");
+                stopRaw();
+                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+            }
+        };
+        mainH.postDelayed(pendingRearm, d);
+    }
+
+    /** 心跳：每 5 分鐘強制開新掃描 session（BT stack 靜默死掃描都會翻生）。 */
+    private static void scheduleHeartbeat() {
+        mainH.removeCallbacks(heartbeat);
+        heartbeat = () -> {
+            if (rawListen != null) {             // 冇 listener＝已停止 → 唔好續命
+                AppLog.i("BleScan", "心跳：開新掃描 session");
+                stopRaw();
+                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+            }
+        };
+        mainH.postDelayed(heartbeat, HEARTBEAT_MS);
+    }
+
+    private static void registerBtRx(Context c) {
+        if (btRxRegistered || c == null) {
+            return;
+        }
+        try {
+            android.content.IntentFilter f = new android.content.IntentFilter();
+            f.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+            f.addAction("android.bluetooth.adapter.action.BLE_STATE_CHANGED");
+            c.registerReceiver(btStateRx, f);
+            btRxRegistered = true;
+        } catch (Throwable ignored) {
+        }
+    }
+
     static void startRaw(final Context ctx, final String[] filterMacs, final int seconds, final R r) {
         appCtx = ctx.getApplicationContext();
         stopRaw();
+        rawMacs = filterMacs;                    // 記低參數 — auto-rearm／心跳開新 session 用
+        rawListen = r;
+        rawSeconds = seconds;
         try {
+            registerBtRx(appCtx);
             BluetoothAdapter ad = adapter(ctx);
             if (ad == null || !ad.isEnabled()) {
+                rawError = "藍牙未開（等 BT 開返自動重掛）";
+                rearmLater();                    // BT stack 未就緒 → backoff 等翻生（BT rx 開返都會即刻觸發）
                 return;
             }
             BluetoothLeScanner sc = ad.getBluetoothLeScanner();
             if (sc == null) {
+                rawError = "拎唔到 BLE scanner（等重試）";
+                rearmLater();
                 return;
             }
             // 有 MAC（常駐監聽，3.12 起可以多粒）→ BALANCED：夠快捉 Zeekr button 廣播
@@ -207,9 +311,11 @@ final class BleScan {
 
                 @Override
                 public void onScanFailed(int errorCode) {
-                    // 掃描註冊失敗唔可以再靜默（3.8–3.10 全聾時狀態卡完全睇唔出）
-                    rawError = "掃描失敗 code=" + errorCode;
+                    // 掃描註冊失敗唔可以再靜默（3.8–3.10 全聾時狀態卡完全睇唔出）；
+                    // 3.15：仲要 auto-rearm — 死掃唔自癒就係問③「一段時間後 button 失效」根因
+                    rawError = "掃描失敗 code=" + errorCode + "（自動重掛中）";
                     AppLog.w("BleScan", rawError);
+                    rearmLater();
                 }
             };
             // 3.11 教訓：唔好用 hardware MAC ScanFilter（setDeviceAddress）—
@@ -219,11 +325,33 @@ final class BleScan {
             // 3.12 多粒只係比對清單多行）；非目標廣播喺 compare 已 return，剩餘工作近零。
             rawError = "";
             sc.startScan(null, st, rawCb);
+            rearmAttempt = 0;                    // 掃描著返 → backoff 歸零
+            scheduleHeartbeat();                 // 5 分鐘後強制新 session
             if (seconds > 0) {
                 new Handler(Looper.getMainLooper()).postDelayed(BleScan::stopRaw, seconds * 1000L);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            rawError = "掃描出錯：" + t.getClass().getSimpleName();
+            AppLog.w("BleScan", rawError);
+            rearmLater();                        // 例外都唔可以死掃 — backoff 翻生
         }
+    }
+
+    /** 完全停止：唔止停掃描，連 auto-rearm／心跳／BT receiver 一齊拆（BtBridge.stop 用呢個）。 */
+    static void stopRawFully() {
+        rawListen = null;                        // 令 rearmNow／heartbeat／rearmLater 全部唔做嘢
+        mainH.removeCallbacks(heartbeat);
+        mainH.removeCallbacks(pendingRearm);
+        rawMacs = null;
+        stopRaw();
+        if (btRxRegistered && appCtx != null) {
+            try {
+                appCtx.unregisterReceiver(btStateRx);
+            } catch (Throwable ignored) {
+            }
+            btRxRegistered = false;
+        }
+        rawError = "";
     }
 
     static void stopRaw() {

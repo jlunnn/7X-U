@@ -38,6 +38,11 @@ final class BtBridge {
     private static Context appCtx;
     private static final String[] lastRawCode = new String[MAXB];   // per-粒 burst 去重
     private static final long[] lastRawAt = new long[MAXB];
+    // 3.15 診斷（分「button 冇出聲」vs「app 食包」）：rawCount＝綁定粒嘅所有廣播（去重前）；
+    // swallowCount＝被 800ms 滑動去重窗食掉嘅連續廣播；lastRawAnyAt＝最後一次見到綁定粒廣播時間。
+    static volatile long rawCount;
+    static volatile long swallowCount;
+    static volatile long lastRawAnyAt;
 
     private static SharedPreferences gp(Context c) {
         return c.getSharedPreferences(GP, Context.MODE_PRIVATE);
@@ -196,6 +201,9 @@ final class BtBridge {
             lastRawCode[s] = "";
             lastRawAt[s] = 0;
         }
+        rawCount = 0;                                // 3.15：開新監聽就重掃診斷數
+        swallowCount = 0;
+        lastRawAnyAt = 0;
         BleScan.rawError = "";                       // 清走上一輪錯誤，唔好顯示舊嘢
         state = "● 常駐監聽中（" + macs.length + " 粒）";
         running = true;
@@ -209,9 +217,12 @@ final class BtBridge {
             if (slot < 0) {
                 return;                        // 唔係綁咗嘅粒（附近第粒 button／其他 BLE）→ 食掉
             }
+            rawCount++;                        // 3.15 診斷：綁定粒嘅廣播（去重前）都計
+            lastRawAnyAt = System.currentTimeMillis();
             String code = codeOf(raw);
             if (code.equals(lastRawCode[slot]) && System.currentTimeMillis() - lastRawAt[slot] < 800) {
                 lastRawAt[slot] = System.currentTimeMillis();   // 滑動窗（per-粒）：burst 繼續就重設時限 → 單擊唔會 fire 兩次；兩粒互唔干擾
+                swallowCount++;                // 3.15 診斷：呢個包被去重窗食掉
                 return;                        // 同一次按壓嘅連續廣播 → 食掉（burst 去重）
             }
             lastRawCode[slot] = code;
@@ -242,7 +253,7 @@ final class BtBridge {
         }
         running = false;
         state = "⏹ 已停";
-        BleScan.stopRaw();
+        BleScan.stopRawFully();                  // 3.15：連 auto-rearm／心跳／BT receiver 一齊拆
     }
 
     // ============================================================ 廣播解碼

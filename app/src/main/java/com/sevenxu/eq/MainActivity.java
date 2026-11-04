@@ -94,6 +94,16 @@ public class MainActivity extends AppCompatActivity {
     private TextView btGest;
     private Button btToggleBtn;
     private boolean settingsOn;
+    /** 3.15：藍牙狀態卡每秒自動更新 — 秒數會跳，唔使手撳「更新狀態」先知 scan 死未。 */
+    private final Runnable btUiTick = new Runnable() {
+        @Override
+        public void run() {
+            if (settingsOn) {
+                syncBtUi();
+                ui.postDelayed(this, 1000);
+            }
+        }
+    };
     private volatile boolean sweeping = false;
     private boolean syncing;
     private TextView setStatusTv;
@@ -893,6 +903,9 @@ public class MainActivity extends AppCompatActivity {
                     flash("未綁定裝置，先掃描綁定");
                     return;
                 }
+                BtBridge.rawCount = 0;           // 3.15：手動重開監聽 → 診斷數重新計
+                BtBridge.swallowCount = 0;
+                BtBridge.lastRawAnyAt = 0;
                 BtBridge.start(this);
             }
             syncBtUi();
@@ -1000,9 +1013,19 @@ public class MainActivity extends AppCompatActivity {
                         : BtBridge.lastCode;
                 long ago = BtBridge.lastAt == 0 ? 0
                         : (System.currentTimeMillis() - BtBridge.lastAt) / 1000;
-                btGest.setText("狀態：" + st + (err.isEmpty() ? "" : "　⚠ " + err) + "\n最近廣播：" + last
+                String rearmInfo = BleScan.rawRearmCount == 0 ? ""
+                        : "｜重掛 " + BleScan.rawRearmCount + " 次"
+                        + (BleScan.lastRearmAt == 0 ? ""
+                                : "（最近 " + (System.currentTimeMillis() - BleScan.lastRearmAt) / 1000 + " 秒前）");
+                btGest.setText("狀態：" + st + (err.isEmpty() ? "" : "　⚠ " + err)
+                        + "\n掃描健康：" + (BtBridge.running ? (BleScan.rawError.isEmpty() ? "正常" : "有錯，自動重掛中") : "已停")
+                        + rearmInfo
+                        + "\n最近廣播：" + last
                         + (BtBridge.lastAt == 0 ? "" : "（" + ago + " 秒前）")
-                        + "\n累計：" + BtBridge.count);
+                        + "\n累計：" + BtBridge.count
+                        + "\n去重（食包）：食 " + BtBridge.swallowCount + "／收 " + BtBridge.rawCount
+                        + (BtBridge.lastRawAnyAt == 0 ? ""
+                                : "｜最後收包 " + (System.currentTimeMillis() - BtBridge.lastRawAnyAt) / 1000 + " 秒前"));
             }
         } catch (Throwable ignored) {
         }
@@ -2345,6 +2368,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        ui.post(btUiTick);                       // 3.15：狀態卡秒數跳動（settingsOn 才做嘢）
         // 車速牌需要定位權限（未授權時問一次）
         try {
             if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
@@ -2417,6 +2441,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         if (ticker != null) ui.removeCallbacks(ticker);
+        ui.removeCallbacks(btUiTick);            // 3.15：狀態卡 tick 收工
         ticker = null;
         stopPulse();
         engine.stop();

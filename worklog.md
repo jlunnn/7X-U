@@ -35,3 +35,22 @@
 - MuMu 實測（install OK）：紅掣 overlay 拖放 (600,384)→(600,1184) 受控（clampY 底限 1184=
   1280-96 吻合）；crash 來源確認係 FGS type bug（非 3.14 改動）。EQ icon 拖動喺 MuMu 上
   未能重現（模擬器全屏 overlay 窗疑似食 touch；GPU 保護提前收工，實車為準）。
+
+## 3.15 (197) — 2026-11-04
+- zeekr button 問③ fix：BLE 常駐掃描 auto-rearm（「死掃唔自癒」＝問③根因：
+  舊版 onScanFailed 只 log、無 BT state receiver、Watchdog 只救 service 唔救 scan）。
+  - BleScan：onScanFailed／BT 未就緒／拎唔到 scanner／startScan 例外 → backoff 自動重掛
+    （1s→3s→10s→30s 上限；掃返着 rearmAttempt 歸零）。
+  - 5 分鐘心跳強制開新掃描 session（BT stack 靜默死掃描都會翻生）。
+  - BT 開關 receiver（ACTION_STATE_CHANGED＋BLE_STATE_CHANGED）：BT 開返即刻重掛監聽，
+    熄咗就收起心跳／重掛 callbacks。
+  - BtBridge.stop → BleScan.stopRawFully：連 auto-rearm／心跳／BT receiver 一齊拆（唔會死灰復燃）。
+  - 診斷計數：BtBridge.rawCount（綁定粒全部廣播，去重前）／swallowCount（800ms 滑動窗食掉）／
+    lastRawAnyAt（最後收包時間）；BleScan.rawRearmCount／lastRearmAt（重掛次數＋時間）。
+  - MainActivity 狀態卡：加「掃描健康」行＋「去重（食包）：食 N／收 N｜最後收包 X 秒前」＋
+    重掛次數；onResume 起每秒自動更新（btUiTick，settingsOn 先做嘢；onDestroy 收工）—
+    分辨「button 冇出聲」（收 0）vs「app 食包」（食多收多）vs「掃描死」（rawError／重掛次數升）。
+- 綁定用一次過掃描照舊（startScan 內 stopScan 加 BleScan. 前綴，唔會撞新方法）。
+- 版號 197 / "3.15"。實車 A/B 未做（要實車）：開 app → 熄返開車機藍牙 → 撳 button
+  應 <10 秒內自動恢復；狀態卡見「重掛 N 次」。sha256 67c8ef2b…（2,737,843 bytes）；
+  hesheeat.cc 三點已上載＋live hash 驗證；GitHub 凍結（未推，等明示）。
