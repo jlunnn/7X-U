@@ -53,4 +53,5 @@
 - 綁定用一次過掃描照舊（startScan 內 stopScan 加 BleScan. 前綴，唔會撞新方法）。
 - 版號 197 / "3.15"。實車 A/B 未做（要實車）：開 app → 熄返開車機藍牙 → 撳 button
   應 <10 秒內自動恢復；狀態卡見「重掛 N 次」。sha256 67c8ef2b…（2,737,843 bytes）；
-  hesheeat.cc 三點已上載＋live hash 驗證；GitHub 凍結（未推，等明示）。
+  hesheeat.cc 三點已上載＋live hash 驗證；同日用戶明示「取消 GitHub 3.14、上載做 v3.4」→
+  v3.14 Release＋tag 已刪、main 推至 7235678、tag v3.4＋Release 433834613（asset 7XU-3.15-arm64.apk 201）；releases/latest 回 v3.4 ✓。
