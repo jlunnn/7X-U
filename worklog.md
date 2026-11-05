@@ -55,3 +55,26 @@
   應 <10 秒內自動恢復；狀態卡見「重掛 N 次」。sha256 67c8ef2b…（2,737,843 bytes）；
   hesheeat.cc 三點已上載＋live hash 驗證；同日用戶明示「取消 GitHub 3.14、上載做 v3.4」→
   v3.14 Release＋tag 已刪、main 推至 7235678、tag v3.4＋Release 433834613（asset 7XU-3.15-arm64.apk 201）；releases/latest 回 v3.4 ✓。
+
+## 3.16 (198) — 2026-11-05
+- 11-05 實車情報：3.15 上掃描死照樣發生（auto-rearm 未救返）；用戶補關鍵證詞——
+  「kill app 之後先可以連接／scan 到新藍牙裝置，kill 前搵唔到任何新 BT 裝置」
+  ＝成個 process 嘅藍牙 binder session 死透，process 內重建 session（3.15 心跳）
+  對住條死 binder 做嘢，所以心跳有做嘢、rawError 卻空、狀態卡「正常」實際全聾。
+- ECARX stack「靜默殺掃描」：無 onScanFailed、無例外 → 3.15 全部翻生路徑都係
+  錯誤訊號觸發，靜默死一個都捉唔到。根因定案。
+- 用戶否決 kill-app 自癒（EQ effect 掛喺本 process，kill＝EQ 平幾秒；雖然會自動掛返，
+  用戶揀 BLE 層自癒）。3.16＝BLE 自癒梯（唔 kill app、EQ 全程唔郁）：
+  - BleScan：rawCb 未過濾前記 lastAnyAdvertAt／anyAdvertCount（stack 活性唯一 observable）。
+  - 心跳改探針制：每 5 分鐘停掃 → 3 秒全頻 LOW_LATENCY 探測 → 有包＝stack 生 →
+    重建全新 session（L1/L2，零副作用）；0 包入 probeZeroStreak。
+  - 開場體檢：新 session 後 60 秒零廣播 → 早探針（捉著車自啟時 BT 未就緒嘅靜默死）。
+  - 死透升級（L3）：連續 3 輪探針 0 包 → 軟件重啟藍牙 ad.disable() → 3 秒/8 秒後備
+    enable → STATE_ON receiver 自動重掛＋12 秒後備重掛。＝人手「熄返開藍牙」自動化。
+  - 保護：藍牙音樂播緊（isBluetoothA2dpOn＋isMusicActive）→ 跳過重啟落輪先算；
+    disable 被拒（SecurityException）→ 狀態卡明示「請人手熄返開藍牙」。
+  - 狀態卡加「探針：…」行（探針結果＋已重啟藍牙 N 次）。
+- 版號 198 / "3.16"。實車 A/B 未做：升 3.16 → 出街等掃描死（或熄返開藍牙製造）→
+  狀態卡應見「探針 0 包（連續 N 輪）→ 自動重啟藍牙」→ BT 返嚟後撳紅掣應復生，
+  EQ／浮窗全程唔斷。sha256 ea8c21c4…（2,742,515 bytes，零 INTERNET ✓）。
+  hesheeat.cc 三點已上載＋live hash 驗證；zeekr/index.html 主行 3.16（19 個版本）。
