@@ -78,3 +78,12 @@
   狀態卡應見「探針 0 包（連續 N 輪）→ 自動重啟藍牙」→ BT 返嚟後撳紅掣應復生，
   EQ／浮窗全程唔斷。sha256 ea8c21c4…（2,742,515 bytes，零 INTERNET ✓）。
   hesheeat.cc 三點已上載＋live hash 驗證；zeekr/index.html 主行 3.16（19 個版本）。
+
+## 3.17 (199) — 2026-11-05
+- 用戶要求：取消 7X=U 嘅藍牙功能（Zeekr button BLE 手勢）。3.15／3.16 兩輪自癒都救唔返實車掃描靜默死，索性整條鏈拆走。
+- 刪 `BleScan.java`（530 行）＋ `BtBridge.java`（438 行）。
+- `MainActivity`：藍牙頁 `buildBtPage()`、`showBt()`、掃描／綁定／手勢映射／狀態卡／`btUiTick` 全拆；標題列「🔵 藍牙」入口移除；`onRequestPermissionsResult` code 77 只留車速牌位置權限提示。
+- `FloatEqService`：`attachService`／自動常駐／`detachService`／`bridgeRecallSlot`／`bridgeMinimize` 移除。
+- `RedButtonOverlay`：BLE static 紅掣路徑（`fireRedButton` / `sReadFog` / `sWriteFog` / `sIcarFunction`）移除；浮窗紅掣本體不變。
+- `AndroidManifest`：BLUETOOTH / BLUETOOTH_ADMIN / BLUETOOTH_SCAN / BLUETOOTH_CONNECT 四個權限移除（app 唔再有任何藍牙存取）。
+- 版號 199 / "3.17"。`compileDebugJavaWithJavac` BUILD SUCCESSFUL。

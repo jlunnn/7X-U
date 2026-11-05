@@ -132,13 +132,6 @@ public class FloatEqService extends Service {
         if (sys != null && sys.ready()) EqService.start(this);
         startForeground();
         buildWindow();
-        BtBridge.attachService(this);                 // BLE 手勢行浮窗 recallSlot（掣面同步）
-        try {                                         // 藍牙 Zeekr button：綁定咗就想聽 → 自動常駐
-            if (BtBridge.wanted(this) && BtBridge.hasAnyBound(this)) {
-                BtBridge.start(this);
-            }
-        } catch (Throwable ignored) {
-        }
     }
 
 
@@ -1851,26 +1844,9 @@ public class FloatEqService extends Service {
         return START_STICKY;   // 被系統殺都自動重開（圓掣長期顯示）
     }
 
-    /** BLE 手勢行 A/B/C 曲線（行返原本 recallSlot：UI／abActive 同步）。 */
-    public void bridgeRecallSlot(String key) {
-        try {
-            ui.post(() -> recallSlot(key));
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** BLE 手勢收埋浮窗（同 minimize 掣一樣）。 */
-    public void bridgeMinimize() {
-        try {
-            ui.post(() -> setMinimized(true));
-        } catch (Throwable ignored) {
-        }
-    }
-
     @Override
     public void onDestroy() {
         alive = false;
-        BtBridge.detachService();
         try {
             if (speedBadge != null) speedBadge.hide();
             if (infoBar != null) infoBar.hide();
