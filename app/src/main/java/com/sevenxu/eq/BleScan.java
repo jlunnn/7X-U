@@ -43,6 +43,20 @@ final class BleScan {
     private static BluetoothLeScanner scanner;
     /** 最近一次常駐掃描錯誤（空字串＝正常）— 藍牙頁狀態卡顯示用。 */
     static volatile String rawError = "";
+    // 3.16 活性探針：ECARX stack 會「靜默殺掃描」— 無 onScanFailed、無例外，3.15 心跳
+    // 重新註冊都救唔返（11-05 實車：心跳有做嘢但全聾，kill app 先翻生）。唔 kill app 嘅自癒梯：
+    // ① rawCb 未過濾前記低「任何廣播」時間（stack 有冇嘢講嘅唯一 observable 訊號）；
+    // ② 心跳改探針制：停掃 → 3 秒全頻 LOW_LATENCY 探測 → 有包＝stack 生（重建全新監聽）；
+    //    連續 3 輪 0 包＝死透 → 軟件重啟藍牙（disable→enable；STATE_ON receiver 自動重掛）
+    //    ＝人手「熄返開藍牙」自動化，app process 唔死、EQ／浮窗全程唔郁。
+    static volatile long lastAnyAdvertAt;
+    static volatile long anyAdvertCount;
+    static volatile String lastProbeNote = "";
+    static volatile long btCycleCount;
+    private static volatile int probeZeroStreak;
+    private static final long PROBE_MS = 3_000L;         // 探針掃描時長
+    private static final long BT_BACK_MS = 3_000L;       // disable 後幾耐 enable
+    private static final long BT_BACK2_MS = 8_000L;      // 後備 enable（防第一刀食咗）
     // 3.15 auto-rearm：onScanFailed 後唔可以死咗唔自癒（問③根因）— backoff 自動重掛起；
     // 5 分鐘心跳定期開新掃描 session（BT stack 靜默死掃描都會翻生）；
     // BT 開關 receiver：車機熄／開藍牙即刻重新掛起監聽。
@@ -219,17 +233,142 @@ final class BleScan {
         mainH.postDelayed(pendingRearm, d);
     }
 
-    /** 心跳：每 5 分鐘強制開新掃描 session（BT stack 靜默死掃描都會翻生）。 */
+    /** 心跳（3.16 探針制）：每 5 分鐘停掃 → 3 秒全頻探測 → 有包＝stack 生，重建全新 session。 */
     private static void scheduleHeartbeat() {
         mainH.removeCallbacks(heartbeat);
         heartbeat = () -> {
             if (rawListen != null) {             // 冇 listener＝已停止 → 唔好續命
-                AppLog.i("BleScan", "心跳：開新掃描 session");
-                stopRaw();
-                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+                probeCycle();
             }
         };
         mainH.postDelayed(heartbeat, HEARTBEAT_MS);
+    }
+
+    /** 3.16 探針：停掃 → 3 秒全頻 LOW_LATENCY 探測。有包＝stack 生 → 重建監聽（零副作用）；
+     *  0 包入静默計數，連續 3 輪＝死透 → 升級軟件重啟藍牙。 */
+    private static void probeCycle() {
+        if (rawListen == null) {
+            return;
+        }
+        if (scanning) {                          // 綁定掃描用緊 → 唔好搶，下輪先
+            scheduleHeartbeat();
+            return;
+        }
+        AppLog.i("BleScan", "心跳探針：停掃 → 3 秒全頻探測");
+        stopRaw();
+        try {
+            BluetoothAdapter ad = adapter(appCtx);
+            BluetoothLeScanner sc = ad == null ? null : ad.getBluetoothLeScanner();
+            if (ad == null || !ad.isEnabled() || sc == null) {
+                rawError = "藍牙未開（等 BT 開返自動重掛）";
+                rearmLater();
+                return;
+            }
+            ScanSettings st = new ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                    .setReportDelay(0)
+                    .build();
+            final int[] hits = {0};
+            final ScanCallback pcb = new ScanCallback() {
+                @Override
+                public void onScanResult(int type, ScanResult r) {
+                    hits[0]++;
+                    lastAnyAdvertAt = System.currentTimeMillis();   // 探針收到都算「stack 有嘢講」
+                    probeZeroStreak = 0;
+                }
+
+                @Override
+                public void onScanFailed(int errorCode) {
+                    AppLog.w("BleScan", "探針失敗 code=" + errorCode);
+                }
+            };
+            sc.startScan(null, st, pcb);
+            mainH.postDelayed(() -> {
+                try {
+                    sc.stopScan(pcb);
+                } catch (Throwable ignored) {
+                }
+                if (hits[0] > 0) {
+                    probeZeroStreak = 0;
+                    lastProbeNote = "探針 " + hits[0] + " 包 → 重建監聽";
+                    AppLog.i("BleScan", lastProbeNote);
+                    rawError = "";
+                    startRaw(appCtx, rawMacs, rawSeconds, rawListen);   // 全新 session（L2）
+                } else {
+                    probeZeroStreak++;
+                    lastProbeNote = "探針 0 包（連續 " + probeZeroStreak + " 輪）";
+                    AppLog.w("BleScan", lastProbeNote);
+                    maybeBtCycle();
+                }
+            }, PROBE_MS);
+        } catch (Throwable t) {
+            rawError = "探針出錯：" + t.getClass().getSimpleName();
+            AppLog.w("BleScan", rawError);
+            rearmLater();
+        }
+    }
+
+    /** 3.16 死透升級：連續 3 輪探針 0 包 → 軟件重啟藍牙（＝人手熄返開，唔使 kill app、EQ 唔郁）。 */
+    private static void maybeBtCycle() {
+        if (probeZeroStreak < 3) {
+            startRaw(appCtx, rawMacs, rawSeconds, rawListen);   // 未夠證據 → 照 3.15 底線重建
+            return;
+        }
+        try {
+            android.media.AudioManager am =
+                    (android.media.AudioManager) appCtx.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null && am.isBluetoothA2dpOn() && am.isMusicActive()) {
+                lastProbeNote += "｜藍牙音樂播緊 → 跳過重啟";
+                AppLog.w("BleScan", "0 包 ×" + probeZeroStreak + " 但藍牙音樂播緊 → 跳過，落輪先算");
+                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+                return;
+            }
+            BluetoothAdapter ad = adapter(appCtx);
+            if (ad == null || !ad.isEnabled()) {
+                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+                return;
+            }
+            btCycleCount++;
+            rawError = "掃描死透（探針 0 包 ×3）→ 自動重啟藍牙（第 " + btCycleCount + " 次）";
+            AppLog.w("BleScan", rawError);
+            try {
+                ad.disable();
+            } catch (Throwable t) {
+                rawError = "自動重啟藍牙被拒（" + t.getClass().getSimpleName() + "）→ 請人手熄返開藍牙";
+                AppLog.w("BleScan", rawError);
+                startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+                return;
+            }
+            probeZeroStreak = 0;
+            // disable → 3 秒後 enable（後備 8 秒再一刀，防食咗）；STATE_ON receiver 會自動重掛
+            mainH.postDelayed(BleScan::backEnable, BT_BACK_MS);
+            mainH.postDelayed(BleScan::backEnable, BT_BACK2_MS);
+            // container 冇派 STATE_ON 嘅後備：12 秒後 BT 開住但冇 session 就重掛
+            mainH.postDelayed(() -> {
+                try {
+                    BluetoothAdapter a4 = adapter(appCtx);
+                    if (a4 != null && a4.isEnabled() && rawListen != null && rawCb == null) {
+                        AppLog.i("BleScan", "BT 重啟後備重掛");
+                        rearmNow();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }, 12_000L);
+        } catch (Throwable t) {
+            AppLog.w("BleScan", "btCycle 例外：" + t.getClass().getSimpleName());
+            startRaw(appCtx, rawMacs, rawSeconds, rawListen);
+        }
+    }
+
+    private static void backEnable() {
+        try {
+            BluetoothAdapter a = adapter(appCtx);
+            if (a != null && !a.isEnabled()) {
+                a.enable();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void registerBtRx(Context c) {
@@ -282,6 +421,9 @@ final class BleScan {
                     if (res == null || res.getDevice() == null) {
                         return;
                     }
+                    lastAnyAdvertAt = System.currentTimeMillis();   // 3.16 活性：未過濾先記
+                    anyAdvertCount++;
+                    probeZeroStreak = 0;
                     String mac = res.getDevice().getAddress();
                     if (filterMacs != null && filterMacs.length > 0) {
                         boolean hit = false;
@@ -326,7 +468,16 @@ final class BleScan {
             rawError = "";
             sc.startScan(null, st, rawCb);
             rearmAttempt = 0;                    // 掃描著返 → backoff 歸零
-            scheduleHeartbeat();                 // 5 分鐘後強制新 session
+            probeZeroStreak = 0;                 // 3.16：新 session 生 → 静默計數歸零
+            scheduleHeartbeat();                 // 5 分鐘後探針體檢
+            if (lastAnyAdvertAt == 0) {          // 3.16 開場體檢：一分鐘都未收過嘢 → 早探針（捉開車時 BT 未就緒嘅静默死）
+                mainH.postDelayed(() -> {
+                    if (rawListen != null && lastAnyAdvertAt == 0 && !scanning) {
+                        AppLog.i("BleScan", "開場 60 秒零廣播 → 早探針");
+                        probeCycle();
+                    }
+                }, 60_000L);
+            }
             if (seconds > 0) {
                 new Handler(Looper.getMainLooper()).postDelayed(BleScan::stopRaw, seconds * 1000L);
             }

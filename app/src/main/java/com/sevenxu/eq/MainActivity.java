@@ -1025,7 +1025,11 @@ public class MainActivity extends AppCompatActivity {
                         + "\n累計：" + BtBridge.count
                         + "\n去重（食包）：食 " + BtBridge.swallowCount + "／收 " + BtBridge.rawCount
                         + (BtBridge.lastRawAnyAt == 0 ? ""
-                                : "｜最後收包 " + (System.currentTimeMillis() - BtBridge.lastRawAnyAt) / 1000 + " 秒前"));
+                                : "｜最後收包 " + (System.currentTimeMillis() - BtBridge.lastRawAnyAt) / 1000 + " 秒前")
+                        + (BleScan.lastProbeNote == null || BleScan.lastProbeNote.isEmpty() ? ""
+                                : "\n探針：" + BleScan.lastProbeNote
+                                + (BleScan.btCycleCount == 0 ? ""
+                                        : "｜已重啟藍牙 " + BleScan.btCycleCount + " 次")));
             }
         } catch (Throwable ignored) {
         }
